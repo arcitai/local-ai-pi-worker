@@ -5,4 +5,45 @@ printf 'PI_DIR=%s FIRECRAWL_API_KEY=%s FIRECRAWL_KEYLESS=%s ARGS=%s\n' \
   "${PI_CODING_AGENT_DIR:-unset}" \
   "${FIRECRAWL_API_KEY:-unset}" \
   "${FIRECRAWL_KEYLESS:-unset}" \
-  "$*" >> "$MOCK_LOG"
+  "$*" >> "${MOCK_LOG:?}"
+
+case " ${*} " in
+  *' install '*) exit 0 ;;
+esac
+
+if [[ " ${*} " == *' --list-models '* ]]; then
+  printf '%s\n' 'local-ai/qwen3.8-27b-local'
+  exit 0
+fi
+
+if [[ " ${*} " == *' --mode rpc '* ]]; then
+  while IFS= read -r line; do
+    request_id="$(jq -r '.id // empty' <<< "$line")"
+    request_type="$(jq -r '.type // empty' <<< "$line")"
+    case "$request_type" in
+      prompt)
+        jq -nc --arg id "$request_id" '{id:$id,type:"response",command:"prompt",success:true}'
+        printf '%s\n' '{"type":"agent_settled"}'
+        ;;
+      get_state)
+        jq -nc --arg id "$request_id" '{id:$id,type:"response",command:"get_state",success:true,data:{sessionId:"mock-session",isStreaming:false}}'
+        ;;
+      get_last_assistant_text)
+        jq -nc --arg id "$request_id" '{id:$id,type:"response",command:"get_last_assistant_text",success:true,data:{text:"mock result"}}'
+        ;;
+      abort)
+        jq -nc --arg id "$request_id" '{id:$id,type:"response",command:"abort",success:true}'
+        ;;
+      *)
+        jq -nc --arg id "$request_id" --arg command "$request_type" '{id:$id,type:"response",command:$command,success:false,error:"unsupported mock command"}'
+        ;;
+    esac
+  done
+  exit 0
+fi
+
+if [[ "${MOCK_PI_FAIL:-0}" == 1 ]]; then
+  printf '%s\n' 'mock Pi failure' >&2
+  exit 7
+fi
+printf '%s\n' 'mock result'

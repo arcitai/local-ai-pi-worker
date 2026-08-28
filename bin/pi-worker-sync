@@ -7,86 +7,214 @@ state_home="${XDG_STATE_HOME:-$HOME/.local/state}"
 worker_dir="${PI_WORKER_DATA_DIR:-$data_home/local-ai-pi-worker}"
 worker_config="${PI_WORKER_CONFIG:-$config_home/local-ai-pi-worker/config.env}"
 state_dir="$state_home/local-ai-pi-worker"
-pi_dir="$worker_dir/pi-agent"
-sync_codex=1
+pi_dir="${PI_WORKER_PI_DIR:-$worker_dir/pi-agent}"
+ensure_only=0
+quiet=0
 
 usage() {
   printf '%s\n' \
-    'Usage: pi-worker-sync [--skip-codex-sync]' \
+    'Usage: pi-worker-sync [--ensure] [--quiet]' \
     '' \
-    'Refresh the OpenCodex and dedicated Pi catalogs from runtime metadata.'
+    'Discover the local runtime and update the dedicated Pi model catalog.' \
+    '' \
+    '  --ensure   Exit quickly when runtime and worker catalog already agree' \
+    '  --quiet    Suppress successful no-op and sync output'
 }
 
 while (($#)); do
   case "$1" in
-    --skip-codex-sync) sync_codex=0 ;;
+    --ensure) ensure_only=1 ;;
+    --quiet) quiet=1 ;;
     -h|--help) usage; exit 0 ;;
     *) printf 'pi-worker-sync: unknown option: %s\n' "$1" >&2; usage >&2; exit 2 ;;
   esac
   shift
 done
 
-for command_name in jq ocx install mktemp; do
+for command_name in curl jq install mktemp; do
   command -v "$command_name" >/dev/null || {
     printf 'pi-worker-sync: missing required command: %s\n' "$command_name" >&2
     exit 1
   }
 done
 
-[[ -r "$worker_config" ]] || {
-  printf 'pi-worker-sync: machine config not found: %s\n' "$worker_config" >&2
+if [[ ! -r "$worker_config" ]]; then
+  printf 'pi-worker-sync: configuration not found: %s\n' "$worker_config" >&2
   exit 1
-}
+fi
 # shellcheck disable=SC1090
 source "$worker_config"
 
 : "${LOCAL_AI_PROVIDER_ID:=local-ai}"
+: "${LOCAL_AI_BASE_URL:?LOCAL_AI_BASE_URL is required}"
 : "${LOCAL_AI_MODEL_ID:?LOCAL_AI_MODEL_ID is required}"
+: "${LOCAL_AI_API:=openai-completions}"
 : "${LOCAL_AI_MAX_OUTPUT_TOKENS:?LOCAL_AI_MAX_OUTPUT_TOKENS is required}"
+: "${LOCAL_AI_DEFAULT_REASONING:=medium}"
+: "${LOCAL_AI_THINKING_LEVELS:=low,medium,xhigh}"
+
 if ! [[ "$LOCAL_AI_MAX_OUTPUT_TOKENS" =~ ^[0-9]+$ ]] || ((LOCAL_AI_MAX_OUTPUT_TOKENS <= 0)); then
   printf 'pi-worker-sync: LOCAL_AI_MAX_OUTPUT_TOKENS must be a positive integer\n' >&2
   exit 1
 fi
 
-if ((sync_codex)); then
-  ocx sync >/dev/null
-  ocx ready --wait --timeout 60 >/dev/null
+runtime_api_key() {
+  local wanted_port
+  if [[ -n "${LOCAL_AI_API_KEY:-}" ]]; then
+    printf '%s' "$LOCAL_AI_API_KEY"
+    return
+  fi
+  command -v ps >/dev/null || return 0
+  wanted_port="${LOCAL_AI_BASE_URL##*:}"
+  wanted_port="${wanted_port%%/*}"
+  ps -ww -eo args= | awk -v wanted_alias="$LOCAL_AI_MODEL_ID" -v wanted_port="$wanted_port" '
+    /llama-server/ {
+      alias_ok = 0; port_ok = 0; key = ""
+      for (i = 1; i <= NF; i++) {
+        if ($i == "--alias" && $(i + 1) == wanted_alias) alias_ok = 1
+        if ($i == "--port" && $(i + 1) == wanted_port) port_ok = 1
+        if ($i == "--api-key") key = $(i + 1)
+      }
+      if (alias_ok && port_ok && key != "") { print key; exit }
+    }
+  '
+}
+
+runtime_key="$(runtime_api_key)"
+runtime_models="$(mktemp)"
+trap 'rm -f -- "$runtime_models" "${rendered:-}" "${state_tmp:-}"' EXIT
+curl_args=(--fail --silent --show-error --connect-timeout 3 --max-time 10)
+if [[ -n "$runtime_key" ]]; then
+  curl_args+=(-H "Authorization: Bearer $runtime_key")
+fi
+if ! curl "${curl_args[@]}" "${LOCAL_AI_BASE_URL%/}/models" > "$runtime_models"; then
+  printf 'pi-worker-sync: local runtime is unavailable at %s\n' "$LOCAL_AI_BASE_URL" >&2
+  printf 'Set LOCAL_AI_API_KEY in %s if automatic process discovery cannot find it.\n' "$worker_config" >&2
+  exit 1
 fi
 
-mkdir -p "$pi_dir" "$state_dir"
-exported="$(mktemp)"
-rendered="$(mktemp)"
-trap 'rm -f -- "$exported" "$rendered"' EXIT
-ocx export --client pi --json > "$exported"
-
-local_id="$LOCAL_AI_PROVIDER_ID/$LOCAL_AI_MODEL_ID"
-resolved_context="$(jq -r --arg id "$local_id" '
-  first(.providers.opencodex.models[]? | select(.id == $id) | .contextWindow) // empty
-' "$exported")"
-
-if ! [[ "$resolved_context" =~ ^[0-9]+$ ]] || ((resolved_context <= 0)); then
-  printf 'pi-worker-sync: runtime did not publish a context window for %s\n' "$local_id" >&2
+runtime_context="${LOCAL_AI_CONTEXT_WINDOW_OVERRIDE:-}"
+if [[ -z "$runtime_context" ]]; then
+  runtime_context="$(jq -r --arg id "$LOCAL_AI_MODEL_ID" '
+    [(.data[]?, .models[]?)
+     | select((.id // .model // .name) == $id)
+     | (.context_window // .contextWindow // .context_length // .context_size
+        // .max_model_len // .max_context_length
+        // .metadata.limits.max_context_length // .metadata.context_length
+        // .meta.n_ctx // .meta.n_ctx_train)]
+    | map(select(. != null)) | first // empty
+  ' "$runtime_models")"
+fi
+if ! [[ "$runtime_context" =~ ^[0-9]+$ ]] || ((runtime_context <= 0)); then
+  printf 'pi-worker-sync: runtime did not expose a valid context for %s\n' "$LOCAL_AI_MODEL_ID" >&2
   printf 'Set LOCAL_AI_CONTEXT_WINDOW_OVERRIDE only if the runtime cannot expose it.\n' >&2
   exit 1
 fi
-if ((LOCAL_AI_MAX_OUTPUT_TOKENS >= resolved_context)); then
+if ((LOCAL_AI_MAX_OUTPUT_TOKENS >= runtime_context)); then
   printf 'pi-worker-sync: output cap %s must be smaller than runtime context %s\n' \
-    "$LOCAL_AI_MAX_OUTPUT_TOKENS" "$resolved_context" >&2
+    "$LOCAL_AI_MAX_OUTPUT_TOKENS" "$runtime_context" >&2
   exit 1
 fi
 
-jq \
-  --arg id "$local_id" \
-  --argjson context "$resolved_context" \
+if ((ensure_only)); then
+  state_context=""
+  if [[ -r "$state_dir/runtime.env" ]]; then
+    state_context="$(awk -F= '$1 == "LOCAL_AI_RESOLVED_CONTEXT_WINDOW" { print $2; exit }' "$state_dir/runtime.env")"
+  fi
+  catalog_context=""
+  catalog_base_url=""
+  if [[ -r "$pi_dir/models.json" ]]; then
+    catalog_context="$(jq -r --arg provider "$LOCAL_AI_PROVIDER_ID" --arg id "$LOCAL_AI_MODEL_ID" '
+      first(.providers[$provider].models[]? | select(.id == $id) | .contextWindow) // empty
+    ' "$pi_dir/models.json")"
+    catalog_base_url="$(jq -r --arg provider "$LOCAL_AI_PROVIDER_ID" \
+      '.providers[$provider].baseUrl // empty' "$pi_dir/models.json")"
+  fi
+  if [[ "$state_context" == "$runtime_context" \
+    && "$catalog_context" == "$runtime_context" \
+    && "$catalog_base_url" == "$LOCAL_AI_BASE_URL" ]]; then
+    if ((quiet == 0)); then
+      printf 'Worker catalog is current: %s/%s at %s tokens.\n' \
+        "$LOCAL_AI_PROVIDER_ID" "$LOCAL_AI_MODEL_ID" "$runtime_context"
+    fi
+    exit 0
+  fi
+fi
+
+thinking_levels="$(printf '%s' "$LOCAL_AI_THINKING_LEVELS" | jq -R '
+  split(",") | map(gsub("^\\s+|\\s+$"; ""))
+  | map(select(. == "off" or . == "minimal" or . == "low" or . == "medium" or . == "high" or . == "xhigh" or . == "max"))
+  | unique
+')"
+if ! jq -e --arg level "$LOCAL_AI_DEFAULT_REASONING" 'index($level) != null' <<< "$thinking_levels" >/dev/null; then
+  printf 'pi-worker-sync: default reasoning level %s is not in LOCAL_AI_THINKING_LEVELS\n' \
+    "$LOCAL_AI_DEFAULT_REASONING" >&2
+  exit 1
+fi
+
+auth_header=false
+catalog_key=local-runtime
+if [[ -n "$runtime_key" ]]; then
+  auth_header=true
+  catalog_key="$runtime_key"
+fi
+
+mkdir -p "$pi_dir" "$state_dir"
+base_catalog=/dev/null
+if [[ -r "$pi_dir/models.json" ]]; then
+  base_catalog="$pi_dir/models.json"
+fi
+rendered="$(mktemp)"
+jq -n \
+  --arg provider "$LOCAL_AI_PROVIDER_ID" \
+  --arg base_url "$LOCAL_AI_BASE_URL" \
+  --arg api "$LOCAL_AI_API" \
+  --arg api_key "$catalog_key" \
+  --arg model "$LOCAL_AI_MODEL_ID" \
+  --arg name "${LOCAL_AI_MODEL_NAME:-$LOCAL_AI_MODEL_ID (local)}" \
+  --argjson auth_header "$auth_header" \
+  --argjson context "$runtime_context" \
   --argjson output "$LOCAL_AI_MAX_OUTPUT_TOKENS" \
-  '(.providers.opencodex.models[] | select(.id == $id)) |=
-    (.input = ["text"] | .contextWindow = $context | .maxTokens = $output)' \
-  "$exported" > "$rendered"
+  --argjson levels "$thinking_levels" \
+  '{providers:{($provider):{
+      baseUrl:$base_url,
+      api:$api,
+      apiKey:$api_key,
+      authHeader:$auth_header,
+      compat:{supportsDeveloperRole:false, supportsReasoningEffort:true},
+      models:[{
+        id:$model,
+        name:$name,
+        reasoning:true,
+        input:["text"],
+        contextWindow:$context,
+        maxTokens:$output,
+        cost:{input:0, output:0, cacheRead:0, cacheWrite:0},
+        thinkingLevelMap:({off:null,minimal:null,low:null,medium:null,high:null,xhigh:null,max:null}
+          | reduce $levels[] as $level (.; .[$level] = $level))
+      }]
+    }}}' > "$rendered"
+
+if [[ "$base_catalog" != /dev/null ]]; then
+  jq -s --arg provider "$LOCAL_AI_PROVIDER_ID" --arg legacy_id "$LOCAL_AI_PROVIDER_ID/$LOCAL_AI_MODEL_ID" '
+    .[0] as $base
+    | .[1] as $generated
+    | (if any($base.providers.opencodex.models[]?; .id == $legacy_id)
+       then $base | del(.providers.opencodex)
+       else $base
+       end)
+    | . * {providers: ((.providers // {}) + {($provider): $generated.providers[$provider]})}
+  ' \
+    "$base_catalog" "$rendered" > "$rendered.merged"
+  mv -- "$rendered.merged" "$rendered"
+fi
 install -m 600 "$rendered" "$pi_dir/models.json"
 
-state_tmp="$state_dir/runtime.env.tmp"
-printf 'LOCAL_AI_RESOLVED_CONTEXT_WINDOW=%s\n' "$resolved_context" > "$state_tmp"
+state_tmp="$(mktemp)"
+printf 'LOCAL_AI_RESOLVED_CONTEXT_WINDOW=%s\n' "$runtime_context" > "$state_tmp"
 install -m 600 "$state_tmp" "$state_dir/runtime.env"
-rm -f -- "$state_tmp"
 
-printf 'Synced %s with runtime context %s tokens.\n' "$local_id" "$resolved_context"
+if ((quiet == 0)); then
+  printf 'Synced %s/%s directly from the runtime at %s tokens.\n' \
+    "$LOCAL_AI_PROVIDER_ID" "$LOCAL_AI_MODEL_ID" "$runtime_context"
+fi

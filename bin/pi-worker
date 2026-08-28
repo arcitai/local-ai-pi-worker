@@ -12,15 +12,32 @@ if [[ -r "$worker_config" ]]; then
   source "$worker_config"
 fi
 
-provider="${PI_WORKER_PROVIDER:-opencodex}"
-model="${PI_WORKER_MODEL:-local-ai/${LOCAL_AI_MODEL_ID:-qwen3.8-27b-local}}"
+provider="${PI_WORKER_PROVIDER:-${LOCAL_AI_PROVIDER_ID:-local-ai}}"
+model="${PI_WORKER_MODEL:-${LOCAL_AI_MODEL_ID:-qwen3.8-27b-local}}"
 thinking="${PI_WORKER_THINKING:-${LOCAL_AI_DEFAULT_REASONING:-medium}}"
 tools="${PI_WORKER_TOOLS:-${PI_WORKER_DEFAULT_TOOLS:-read,grep,find,ls,web_search,web_fetch}}"
 mode="${PI_WORKER_MODE:-text}"
+result_json=0
+rpc_mode=0
+job_id="${PI_WORKER_JOB_ID:-piw-$(date -u +%s)-$$}"
 pi_agent_dir="${PI_WORKER_PI_DIR:-$worker_dir/pi-agent}"
 web_extension="${PI_WORKER_WEB_EXTENSION:-$pi_agent_dir/npm/node_modules/@tian.zuo/pi-web-search/index.ts}"
 web_enabled=1
-system_prompt="${PI_WORKER_SYSTEM_PROMPT:-You are a headless delegated worker with no access to the parent conversation. Complete only the assigned bounded task. Do not ask the user or delegate further work. Use tools only when needed. Return concise findings with concrete file paths, source links, or other evidence and state uncertainty explicitly. Do not modify files unless write tools are enabled and the task explicitly requests it.}"
+context_enabled=1
+workdir=""
+worker_skill="${PI_WORKER_CORE_SKILL:-$worker_dir/skills/bounded-worker}"
+skill_paths=()
+if [[ -e "$worker_skill" ]]; then
+  skill_paths+=("$worker_skill")
+fi
+system_prompt_file="${PI_WORKER_SYSTEM_PROMPT_FILE:-$worker_dir/worker-system-prompt.txt}"
+if [[ -n "${PI_WORKER_SYSTEM_PROMPT:-}" ]]; then
+  system_prompt="$PI_WORKER_SYSTEM_PROMPT"
+elif [[ -r "$system_prompt_file" ]]; then
+  system_prompt="$(<"$system_prompt_file")"
+else
+  system_prompt='You are an isolated delegated worker. Complete only the bounded task and return a concise evidence-backed handoff to the lead. Do not ask the user, delegate further, leave the assigned working directory, or modify files without explicit write authorization.'
+fi
 
 usage() {
   printf '%s\n' \
@@ -28,19 +45,25 @@ usage() {
     '       <task on stdin> | pi-worker [options]' \
     '' \
     'Options:' \
-    '  --provider NAME     Pi provider exported by OpenCodex (default: opencodex)' \
-    '  --model ID          OpenCodex model, with provider prefix when needed' \
+    '  --provider NAME     Pi provider (default: configured local provider)' \
+    '  --model ID          Model exposed by that provider' \
+    '  --cwd PATH          Run the worker inside this explicit project root' \
+    '  --job-id ID         Stable parent-owned worker identifier' \
     '  --thinking LEVEL    off|minimal|low|medium|high|xhigh|max' \
+    '  --skill PATH        Add one explicit child skill (repeatable)' \
+    '  --no-context-files  Ignore project AGENTS.md/CLAUDE.md files' \
     '  --tools LIST        Pi tool allowlist' \
     '  --no-tools          Disable every tool' \
     '  --no-web            Disable web_search and web_fetch' \
     '  --write             Enable scoped filesystem and shell mutation tools' \
-    '  --json              Emit Pi JSONL events' \
+    '  --json              Stream raw Pi JSONL events' \
+    '  --result-json       Emit one stable final-result JSON object' \
+    '  --rpc               Run a persistent Pi JSONL worker on stdin/stdout' \
     '  --text              Emit only final text' \
     '  --system-prompt TXT Override the minimal worker prompt' \
     '  --web-setup         Start Pi interactively; run /websearch-auth for Monid' \
-    '  --sync              Refresh Codex and Pi model catalogs from the runtime' \
-    '  --health            Verify OpenCodex and list routed models' \
+    '  --sync              Force-refresh the worker catalog from the runtime' \
+    '  --health            Synchronize and verify local worker readiness' \
     '  -h, --help          Show this help'
 }
 
@@ -63,6 +86,19 @@ while (($#)); do
       model="${2:?missing value for --model}"
       shift 2
       ;;
+    --cwd)
+      candidate="${2:?missing value for --cwd}"
+      if [[ ! -d "$candidate" ]]; then
+        printf 'pi-worker: working directory not found: %s\n' "$candidate" >&2
+        exit 2
+      fi
+      workdir="$(cd -- "$candidate" && pwd -P)"
+      shift 2
+      ;;
+    --job-id)
+      job_id="${2:?missing value for --job-id}"
+      shift 2
+      ;;
     --thinking)
       thinking="${2:?missing value for --thinking}"
       shift 2
@@ -71,9 +107,25 @@ while (($#)); do
       tools="${2:?missing value for --tools}"
       shift 2
       ;;
+    --skill)
+      candidate="${2:?missing value for --skill}"
+      if [[ -d "$candidate" ]]; then
+        skill_paths+=("$(cd -- "$candidate" && pwd -P)")
+      elif [[ -f "$candidate" ]]; then
+        skill_paths+=("$(cd -- "$(dirname -- "$candidate")" && pwd -P)/$(basename -- "$candidate")")
+      else
+        printf 'pi-worker: skill path not found: %s\n' "$candidate" >&2
+        exit 2
+      fi
+      shift 2
+      ;;
     --no-tools)
       tools=""
       web_enabled=0
+      shift
+      ;;
+    --no-context-files)
+      context_enabled=0
       shift
       ;;
     --no-web)
@@ -86,6 +138,16 @@ while (($#)); do
       ;;
     --json)
       mode="json"
+      shift
+      ;;
+    --result-json)
+      mode="text"
+      result_json=1
+      shift
+      ;;
+    --rpc)
+      mode="rpc"
+      rpc_mode=1
       shift
       ;;
     --text)
@@ -106,7 +168,7 @@ while (($#)); do
       exec "$worker_bin_dir/pi-worker-sync"
       ;;
     --health)
-      ocx health --json
+      "$worker_bin_dir/pi-worker-sync" --ensure
       export PI_CODING_AGENT_DIR="$pi_agent_dir"
       exec pi --list-models "$provider"
       ;;
@@ -129,7 +191,22 @@ while (($#)); do
   esac
 done
 
-if (($#)); then
+if [[ ! "$job_id" =~ ^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$ ]]; then
+  printf 'pi-worker: --job-id must be 1-128 safe identifier characters\n' >&2
+  exit 2
+fi
+
+if ((rpc_mode)) && { [[ "$mode" != rpc ]] || ((result_json)); }; then
+  printf 'pi-worker: --rpc cannot be combined with --json, --result-json, or --text\n' >&2
+  exit 2
+fi
+
+if ((rpc_mode)) && (($#)); then
+  printf 'pi-worker: --rpc accepts commands on stdin, not an initial task argument\n' >&2
+  exit 2
+elif ((rpc_mode)); then
+  task=""
+elif (($#)); then
   task="$*"
 elif [[ ! -t 0 ]]; then
   task="$(</dev/stdin)"
@@ -139,9 +216,20 @@ else
   exit 2
 fi
 
-if [[ -z "${task//[[:space:]]/}" ]]; then
+if ((rpc_mode == 0)) && [[ -z "${task//[[:space:]]/}" ]]; then
   printf 'pi-worker: task must not be empty\n' >&2
   exit 2
+fi
+
+if [[ -n "$workdir" ]]; then
+  cd -- "$workdir"
+else
+  workdir="$(pwd -P)"
+fi
+
+if [[ "$provider" == "${LOCAL_AI_PROVIDER_ID:-local-ai}" \
+  && "$model" == "${LOCAL_AI_MODEL_ID:-qwen3.8-27b-local}" ]]; then
+  "$worker_bin_dir/pi-worker-sync" --ensure --quiet
 fi
 
 if ((web_enabled)); then
@@ -163,16 +251,27 @@ args=(
   --model "$model"
   --thinking "$thinking"
   --mode "$mode"
-  --print
-  --no-session
   --no-extensions
   --no-skills
   --no-prompt-templates
-  --no-context-files
   --no-themes
   --offline
   --system-prompt "$system_prompt"
 )
+
+if ((context_enabled == 0)); then
+  args+=(--no-context-files)
+fi
+
+for skill_path in "${skill_paths[@]}"; do
+  args+=(--skill "$skill_path")
+done
+
+if ((rpc_mode == 0)); then
+  args+=(--print --no-session)
+else
+  args+=(--name "$job_id")
+fi
 
 if ((web_enabled)); then
   args+=(--extension "$web_extension")
@@ -182,6 +281,29 @@ if [[ -n "$tools" ]]; then
   args+=(--tools "$tools")
 else
   args+=(--no-tools)
+fi
+
+if ((result_json)); then
+  if result="$(pi "${args[@]}" "$task")"; then
+    status=0
+  else
+    status=$?
+  fi
+  jq -n \
+    --argjson ok "$([[ "$status" -eq 0 ]] && printf true || printf false)" \
+    --argjson exit_code "$status" \
+    --arg job_id "$job_id" \
+    --arg state "$([[ "$status" -eq 0 ]] && printf settled || printf failed)" \
+    --arg provider "$provider" \
+    --arg model "$model" \
+    --arg cwd "$workdir" \
+    --arg result "$result" \
+    '{ok:$ok, exit_code:$exit_code, job_id:$job_id, state:$state, provider:$provider, model:$model, cwd:$cwd, result:$result}'
+  exit "$status"
+fi
+
+if ((rpc_mode)); then
+  exec pi "${args[@]}"
 fi
 
 exec pi "${args[@]}" "$task"

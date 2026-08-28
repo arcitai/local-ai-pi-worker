@@ -1,36 +1,36 @@
 # local-ai-pi-worker
 
-Reproducible Linux integration for a minimal Pi worker routed through
-[OpenCodex](https://github.com/lidge-jun/opencodex), with both local and cloud
-models available from one provider catalog.
+A small, reproducible Linux package for running an isolated
+[Pi coding agent](https://github.com/earendil-works/pi-mono) against a local
+OpenAI-compatible model server.
 
-The default local integration targets an OpenAI-compatible model server at
-`127.0.0.1:8080`, one local inference slot and native text-only input. Its
-served context window is inherited from live runtime metadata, so a 65K or 128K
-runtime profile is configured only in the runtime. Codex image attachments
-remain available through an explicit cloud sidecar that converts an image to a
-bounded text description before the local model receives it. Repository paths,
-model storage paths and machine-specific runtime profiles are never hardcoded.
+It owns one thing: the local Pi worker boundary. That includes a dedicated Pi
+configuration, a safe CLI, runtime-derived model metadata, a compact web-tool
+policy, and a portable delegation skill. It does not install or configure a
+parent agent, gateway, desktop app, local model runtime, GPU stack, or model.
+
+The default endpoint is `127.0.0.1:8080`. Context is inherited from live
+runtime metadata rather than duplicated in this repo, so changing a runtime
+profile from 65K to 128K changes the worker on its next invocation.
 
 ## What it installs
 
-- pinned open-source OpenCodex and Pi CLI versions;
-- an enabled OpenCodex user service on `127.0.0.1:10100`;
-- explicit Codex web-search and vision sidecars for the text-only local model;
-- a dedicated Pi config under `~/.local/share/local-ai-pi-worker/pi-agent`;
-- `~/.local/bin/pi-worker` with read-only defaults and opt-in write tools;
-- `~/.local/bin/pi-worker-sync` for runtime-to-catalog synchronization;
+- a pinned Pi CLI version;
+- a dedicated Pi home under `~/.local/share/local-ai-pi-worker/pi-agent`;
+- `pi-worker`, a read-only-by-default one-shot and RPC worker CLI;
+- `pi-worker-sync`, which discovers and atomically updates the local catalog;
+- a small child-only bounded-task and handoff skill;
 - the portable `orchestrate-pi-worker` skill under `~/.agents/skills`;
-- Monid-first web tools with OpenCodex search fallback and Firecrawl disabled.
+- Monid-first web tools, direct fetch fallback, and Firecrawl disabled.
 
-It does not install a model, llama.cpp, GPU drivers, an Omarchy plugin, themes,
-sessions or provider secrets. See [architecture and ownership](docs/ARCHITECTURE.md).
+Nothing is written to general Pi settings. The web extension currently uses
+its upstream shared config/auth paths; the installer backs those files up and
+restores them on uninstall.
 
 ## Install
 
-Prerequisites: Linux, Bash, `jq`, `curl`, and either `mise` or Node/npm. A local
-OpenAI-compatible endpoint is optional for cloud-only use but required for the
-default worker model.
+Prerequisites: Linux, Bash, `jq`, `curl`, and either `mise` or Node/npm. The
+configured local OpenAI-compatible endpoint must be running.
 
 ```bash
 git clone https://github.com/onlinesourdough/local-ai-pi-worker.git
@@ -39,56 +39,112 @@ cd local-ai-pi-worker
 ./doctor.sh
 ```
 
-Restart Codex once after the first install so the app reloads OpenCodex's model
-catalog and the new skill. The OpenCodex service starts automatically after
-future logins/reboots.
+Edit `~/.config/local-ai-pi-worker/config.env` and rerun `./install.sh` for a
+different endpoint, model ID, API dialect, reasoning levels, or skill root.
+Context normally has no integration setting: it is read from `/v1/models`.
+See [configuration](docs/CONFIGURATION.md).
 
-Edit `~/.config/local-ai-pi-worker/config.env` and rerun `./install.sh` to use a
-different endpoint, model ID or cloud-model allowlist. Context normally has no
-integration setting: OpenCodex reads the served value from `/v1/models`. Full
-options are in [configuration](docs/CONFIGURATION.md).
+If an agent is doing the setup, point it at [AGENTS.md](AGENTS.md). That file
+defines the package boundary and the exact install, audit, and release checks.
 
 ## Use
 
+One-shot workers return their final answer on stdout, diagnostics on stderr,
+and success/failure through the process exit code.
+
 ```bash
-pi-worker --thinking low --no-web -- 'Inspect this repository. Do not edit files.'
-pi-worker --model gpt-5.6-luna --thinking high -- 'Review this design.'
-pi-worker --write -- 'Implement the explicitly scoped change and run its tests.'
-pi-worker --sync
+pi-worker --cwd /path/to/project --thinking low --no-web -- 'Inspect this repository. Do not edit files.'
+pi-worker --cwd /path/to/project --write -- 'Implement the explicitly scoped change and run its tests.'
+pi-worker --cwd /path/to/project --job-id review-42 --result-json --no-tools -- 'Classify this input.'
 pi-worker --health
 ```
 
-Only use `--write` when the caller has explicitly authorized that exact mutation.
-Run `pi-worker --sync` after changing a live runtime profile; OpenCodex refreshes
-the Codex catalog and the command writes the same discovered context to Pi's
-dedicated model catalog. OpenCodex also re-discovers the active context whenever
-its service starts, including after a reboot.
+Only use `--write` when the caller explicitly authorized that exact mutation.
+Every local invocation first performs a lightweight runtime/catalog check and
+self-synchronizes on drift. `pi-worker --sync` remains available as a forced
+recovery command; it is not a routine step.
 
-The bundled skill is a generic parent/worker contract: the parent may be Codex,
-Pi, another Agent Skills-compatible harness, or a human operator. The shared
-`~/.agents/skills` location is discovered by both Codex and Pi; override
-`PI_WORKER_SKILL_ROOT` for a harness with another skill root. The dedicated
-worker itself stays isolated and never loads this orchestration skill recursively.
+`--cwd` is the rooted task contract and context origin, not a kernel sandbox.
+Keep write mode for trusted workers with precise authority; a parent needing
+hard isolation should add its own container/sandbox around the same CLI.
 
-## Web search
+## Harness integration
 
-Search is a tool-provider chain, separate from OpenCodex model routing:
+The caller and worker are deliberately separate:
 
-1. Monid/TinyFish, when a Monid API key is configured.
-2. OpenCodex's OpenAI-compatible Responses endpoint.
+```text
+any parent harness or human
+        │ shell process + stdout/JSONL
+        ▼
+    pi-worker
+        │ dedicated Pi config
+        ▼
+local runtime (default) or an explicitly selected Pi provider
+```
 
-Fetch uses Monid first and direct HTTP as fallback. Firecrawl keyless mode is
-off, `FIRECRAWL_API_KEY` is removed from the worker environment, and the
-installer removes a stored Firecrawl credential after backing it up.
+For a one-shot task, capture stdout or use `--result-json`. For a managed
+worker, launch `pi-worker --rpc` in the task working directory and speak Pi's
+native JSONL RPC protocol over stdin/stdout. That protocol provides prompt,
+steering, follow-up, state, final-result retrieval and abort, so an app such as
+AIOS can wrap it with the same worker lifecycle it uses for other harnesses
+without this repo depending on that app.
 
-To add Monid credentials locally:
+Successful worker settlement is reported neutrally as `settled`; the parent
+adapter decides whether that means AIOS `waiting-review`, a completed shell
+job, or another harness state. `--job-id` provides a stable identifier and
+becomes the Pi session name in RPC mode. A process worker can appear in
+terminal/tool activity, but it is not automatically a native, clickable child
+thread in a desktop app; that presentation belongs to the parent app's adapter.
+
+Every child gets only the bundled `bounded-worker` skill by default. Implicit
+skill discovery is disabled to keep context small and prevent recursive
+delegation, while repository `AGENTS.md`/`CLAUDE.md` instructions load from the
+selected cwd. A lead passes relevant task/lifecycle capabilities with repeated
+`--skill /absolute/path` options. The worker follows the caller's handoff shape,
+or falls back to a concise evidence-backed summary.
+
+The bundled skill teaches an Agent Skills-compatible parent when and how to use
+both modes. A parent Pi session may itself use OpenAI while delegating to the
+local model; a different parent can invoke the same CLI if it can run a process
+and consume stdout. Set `PI_WORKER_SKILL_ROOT` when a harness uses another
+global skill directory.
+
+The ordinary `pi` command and its general config are unchanged. Only
+`pi-worker` exports the dedicated Pi home and disables implicit skills,
+extensions, prompts, and themes. Its rooted repository context remains intact;
+`--no-context-files` disables that too when deliberately required.
+
+The CLI also accepts `--provider NAME --model ID`. That is an escape hatch for
+providers available to the dedicated worker through environment credentials or
+its own Pi home; managing those providers is outside this repo's scope.
+
+See [RPC and app integration](docs/RPC.md) and
+[architecture and ownership](docs/ARCHITECTURE.md).
+
+## Web tools
+
+Search prefers Monid when `MONID_API_KEY` or its Pi web-search credential is
+available. Other providers supported by the installed web extension may be
+used when independently authenticated. Fetch falls back to direct HTTP.
+Firecrawl keyless mode is off and its environment key is removed from worker
+processes.
+
+An existing OpenAI-compatible search endpoint is preserved as machine-local
+web-tool configuration; this package neither creates nor owns it.
+
+To configure the extension interactively:
 
 ```bash
 pi-worker --web-setup
-# then run /websearch-auth and choose Monid
+# run /websearch-auth and choose Monid
 ```
 
-No Monid login is required for the OpenCodex fallback.
+## Optional gateways
+
+A gateway can still be useful when a parent app needs a unified catalog,
+provider-owned authentication, or modality sidecars. OpenCodex is one possible
+adapter, but it is not installed, configured, required, or owned here. Keep
+that bridge beside this package rather than inside the local worker.
 
 ## Uninstall
 
@@ -96,6 +152,6 @@ No Monid login is required for the OpenCodex fallback.
 ./uninstall.sh
 ```
 
-The uninstaller removes only repo-managed files and restores first-install
-backups. It leaves shared CLI packages installed. Pass `--keep-opencodex` to
-leave the current OpenCodex configuration untouched.
+The uninstaller removes only repo-managed worker files and restores the shared
+web-extension files it backed up. It leaves Pi itself, runtimes, gateways,
+parent harnesses, models, and credentials it did not manage untouched.

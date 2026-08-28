@@ -1,43 +1,52 @@
 # Architecture and ownership
 
-This repository is an integration layer. It deliberately does not own a model
-runtime, model files, GPU tuning, Omarchy UI, Codex authentication, or general
-Pi customization.
+This repository is a local worker package, not an agent platform or provider
+gateway.
 
 | Layer | Owns | Does not own |
 | --- | --- | --- |
-| Omarchy Local AI plugin | Profiles, llama.cpp service, model lifecycle and local UI | Pi, Codex or provider routing |
-| OpenCodex | One OpenAI-compatible catalog for local and cloud providers; live runtime-capability discovery; Codex injection; background proxy; web and vision sidecars | Local model process or Pi worker policy |
-| This repository | Dedicated Pi worker config, `pi-worker`, catalog sync, web-tool policy and portable orchestration skill | General `~/.pi/agent` config, sessions, themes or secrets |
-| Codex | Primary orchestration, approvals and final verification | GPU runtime configuration |
+| Local runtime or machine plugin | Model process, profiles, context, GPU tuning and model lifecycle | Pi policy or parent orchestration |
+| This repository | Dedicated Pi config, direct local-provider catalog, worker CLI/RPC, safe tool policy and portable delegation skill | Runtime, parent app, general Pi config, cloud auth or gateway |
+| Parent harness or app | Task decomposition, worker process lifecycle, approvals, result verification and user interaction | Worker model internals |
+| Optional gateway | Unified catalogs, auth forwarding or modality sidecars | This worker's policy and tools |
 
 ```text
-Parent harness ── OpenCodex :10100 ── cloud providers
-  │                       └─────────── Local AI :8080 ── llama.cpp/Vulkan
-  └── orchestrate-pi-worker skill (~/.agents/skills)
-          └── pi-worker ── Pi (dedicated config) ── OpenCodex :10100
-                          └── web_search: Monid → OpenCodex
-                              web_fetch: Monid → direct HTTP
+Parent harness / app / human
+  ├── one shot: pi-worker ... ── stdout or final JSON
+  └── managed:  pi-worker --rpc
+                     ├── stdin  JSONL commands
+                     └── stdout JSONL responses and events
+                              │
+                              ▼
+                    Pi (dedicated config)
+                              │
+                              ▼
+                 local OpenAI-compatible runtime
 ```
 
-OpenCodex is the model-provider gateway. The web extension has a separate
-tool-provider fallback chain: it is not an OpenCodex combo/model failover.
-Firecrawl keyless mode is disabled in config, its environment key is removed
-from the worker process, and the installer removes only the stored
-`websearch-firecrawl` credential after making a backup.
+The parent provider is unrelated to the worker provider. A cloud-backed parent
+may start a local worker, and a shell-only parent may do the same. The portable
+skill is the behavioral adapter for Agent Skills-compatible harnesses; the CLI
+and its process protocol are the universal integration boundary.
 
-The local Qwen runtime is natively text-only. Its Pi catalog therefore remains
-text-only. OpenCodex deliberately advertises image input to Codex because its
-configured `gpt-5.6-luna` vision sidecar converts images to bounded text
-descriptions before Qwen sees them. This keeps attachments usable in Codex
-without making the GGUF multimodal. Image understanding is Luna's contribution;
-Qwen receives only the resulting text.
+Runtime capabilities flow one way. The endpoint publishes its active context;
+`pi-worker-sync` validates it and writes the same value to Pi's dedicated
+`models.json`. A local invocation first performs a small consistency check and
+repairs drift. An explicit override exists only for compatible endpoints that
+omit context metadata.
 
-Runtime capabilities flow in one direction. llama.cpp publishes its active
-`meta.n_ctx`; OpenCodex discovers that value; `pi-worker-sync` exports the same
-value into the dedicated Pi catalog. A blank override means no integration layer
-caps a later runtime profile change. The optional override exists only for
-compatible servers whose model endpoint omits context metadata.
+The local model is natively text-only and is advertised as such. Image
+description or vision remains an optional responsibility of a parent/gateway;
+this package never makes a text model appear multimodal.
 
-Local workers intentionally run one at a time on a single-slot local runtime.
-Cloud-routed Pi workers may run concurrently without contending for that slot.
+One local worker should run at a time when the runtime has one inference slot.
+The parent owns scheduling and may queue additional local tasks. A worker
+started with another independently configured provider does not consume that
+slot.
+
+The RPC mode intentionally reuses Pi's native protocol rather than inventing a
+server. A future AIOS adapter can spawn one process per worker, keep the process
+handle as its session reference, map Pi's neutral settled event into AIOS's
+`waiting-review` lifecycle, let the lead accept or revise it, send `steer` or
+`follow_up`, and send `abort` before terminating the child. Other parents keep
+their own lifecycle vocabulary. See [RPC and app integration](RPC.md).
