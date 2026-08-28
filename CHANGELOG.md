@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.6.0 - 2026-08-28
+
+- Supply every valid machine-global Agent Skill from `~/.agents/skills` to Pi
+  workers by default while retaining metadata-first progressive disclosure.
+- Keep the parent-only `orchestrate-pi-worker` skill in the parent harness's
+  global skill root—Codex `~/.codex/skills` by default—and migrate the
+  package-owned copy that releases 0.2-0.5 placed in `~/.agents/skills`.
+- Separate parent and child skill roots through `PI_WORKER_SKILL_ROOT` and
+  `PI_WORKER_MACHINE_SKILL_ROOT`, so other harnesses can select their own
+  parent location without hardcoded repository paths.
+- Add `--no-global-skills` for project-only discovery; retain `--no-skills` as
+  the fully skill-free mode and leave capability-profile tool limits intact.
+
 ## 0.5.0 - 2026-08-28
 
 - Add `pi-worker --check-update` and `pi-worker --update` backed by stable

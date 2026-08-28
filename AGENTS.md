@@ -37,11 +37,12 @@ explicit check and keep the daily timer short-lived.
   protocol, not scrape terminal output or invent a second server.
 - Transport settlement is neutral; parent adapters own lifecycle names such as
   AIOS `waiting-review` and Codex app-server thread states.
-- Load rooted repository context files and project skill catalogs by default;
-  keep global skill discovery off and preserve Pi's progressive disclosure.
+- Keep Pi's implicit skill discovery off, then explicitly load neutral machine
+  skills and rooted project catalogs while preserving progressive disclosure.
 - Default to the `inspect` profile. Web, writes, shell, explicit skills, and
   extra extensions are separate opt-ins selected by the lead.
-- Never load the delegation skill recursively inside the child worker.
+- Install the delegation skill in the parent harness's global skill root,
+  separate from the child machine-skill catalog.
 - Queue local workers when the runtime exposes one inference slot.
 
 ## Changes and release

@@ -77,6 +77,7 @@ append_config_default LOCAL_AI_MODEL_NAME "$LOCAL_AI_MODEL_NAME"
 append_config_default LOCAL_AI_API "$LOCAL_AI_API"
 append_config_default LOCAL_AI_THINKING_LEVELS "$LOCAL_AI_THINKING_LEVELS"
 append_config_default PI_WORKER_DEFAULT_PROFILE "$PI_WORKER_DEFAULT_PROFILE"
+append_config_default PI_WORKER_MACHINE_SKILL_ROOT "$PI_WORKER_MACHINE_SKILL_ROOT"
 append_config_default PI_WORKER_UPDATE_REPO "$PI_WORKER_UPDATE_REPO"
 append_config_default PI_WORKER_UPDATE_NOTIFY "$PI_WORKER_UPDATE_NOTIFY"
 install -m 600 "$migrated_config" "$config_file"
@@ -84,9 +85,9 @@ rm -f -- "$migrated_config"
 # shellcheck disable=SC1090
 source "$config_file"
 
-skill_root="${PI_WORKER_SKILL_ROOT:-$HOME/.agents/skills}"
+skill_root="${PI_WORKER_SKILL_ROOT:-$codex_home/skills}"
 skill_dir="$skill_root/orchestrate-pi-worker"
-legacy_skill_dir="$codex_home/skills/orchestrate-pi-worker"
+misplaced_skill_dir="$HOME/.agents/skills/orchestrate-pi-worker"
 mkdir -p "$skill_root"
 
 if ! [[ "$LOCAL_AI_MAX_OUTPUT_TOKENS" =~ ^[0-9]+$ ]] || ((LOCAL_AI_MAX_OUTPUT_TOKENS <= 0)); then
@@ -140,7 +141,11 @@ command -v pi >/dev/null || { printf 'install.sh: pi is not installed\n' >&2; ex
 backup_once "$bin_dir/pi-worker" pi-worker
 backup_once "$bin_dir/pi-worker-sync" pi-worker-sync
 backup_once "$bin_dir/pi-worker-update" pi-worker-update
-backup_once "$skill_dir" orchestration-skill
+skill_backup=orchestration-skill
+if [[ "$skill_dir" == "$codex_home/skills/orchestrate-pi-worker" ]]; then
+  skill_backup=codex-skill
+fi
+backup_once "$skill_dir" "$skill_backup"
 backup_once "$web_config" pi-web-search.json
 backup_once "$update_service" update-service
 backup_once "$update_timer" update-timer
@@ -151,18 +156,13 @@ install -m 755 "$repo_dir/bin/pi-worker-update" "$bin_dir/pi-worker-update"
 rm -rf -- "$skill_dir"
 cp -a "$repo_dir/skills/orchestrate-pi-worker" "$skill_dir"
 
-# v0.1 installed this skill in a Codex-private directory. Migrate it once to
-# the harness-neutral Agent Skills location without making Codex a dependency.
-legacy_skill_migrated="$state_dir/legacy-skill-migrated"
-if [[ "$skill_dir" != "$legacy_skill_dir" && ! -e "$legacy_skill_migrated" ]]; then
-  if [[ -e "$backup_dir/codex-skill" ]]; then
-    rm -rf -- "$legacy_skill_dir"
-    mkdir -p "$(dirname -- "$legacy_skill_dir")"
-    cp -a -- "$backup_dir/codex-skill" "$legacy_skill_dir"
-  elif [[ -e "$backup_dir/codex-skill.absent" ]]; then
-    rm -rf -- "$legacy_skill_dir"
-  fi
-  : > "$legacy_skill_migrated"
+# v0.2-v0.5 marked installations after placing the parent-only orchestration
+# skill in the child machine catalog. Only that marked, package-owned path is
+# removed; a fresh install never deletes an unrelated same-named machine skill.
+if [[ "$skill_dir" != "$misplaced_skill_dir" \
+  && -e "$state_dir/legacy-skill-migrated" \
+  && -e "$misplaced_skill_dir" ]]; then
+  rm -rf -- "$misplaced_skill_dir"
 fi
 
 mkdir -p "$(dirname -- "$web_config")"

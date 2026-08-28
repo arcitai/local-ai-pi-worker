@@ -41,7 +41,12 @@ XDG_STATE_HOME="$tmp_root/state"
 CODEX_HOME="$tmp_root/codex"
 PI_WORKER_BIN_DIR="$tmp_root/bin"
 export HOME XDG_DATA_HOME XDG_CONFIG_HOME XDG_STATE_HOME CODEX_HOME PI_WORKER_BIN_DIR
-mkdir -p "$HOME/.config/pi-web-search" "$tmp_root/project/.agents/skills/project-review"
+mkdir -p \
+  "$HOME/.config/pi-web-search" \
+  "$HOME/.agents/skills" \
+  "$HOME/.agents/skills/orchestrate-pi-worker" \
+  "$tmp_root/project/.agents/skills/project-review" \
+  "$tmp_root/shared-machine-review"
 printf '%s\n' \
   '---' \
   'name: project-review' \
@@ -49,6 +54,20 @@ printf '%s\n' \
   '---' \
   '# Project Review' \
   > "$tmp_root/project/.agents/skills/project-review/SKILL.md"
+printf '%s\n' \
+  '---' \
+  'name: machine-review' \
+  'description: Review machine-specific configuration.' \
+  '---' \
+  '# Machine Review' \
+  > "$tmp_root/shared-machine-review/SKILL.md"
+ln -s "$tmp_root/shared-machine-review" "$HOME/.agents/skills/machine-review"
+printf '%s\n' \
+  '---' \
+  'name: orchestrate-pi-worker' \
+  'description: Misplaced package-owned parent skill from an older release.' \
+  '---' \
+  > "$HOME/.agents/skills/orchestrate-pi-worker/SKILL.md"
 mkdir -p "$HOME/.pi/agent"
 printf '%s\n' '{"defaultProvider":"ordinary-pi"}' > "$HOME/.pi/agent/settings.json"
 plain_pi_hash="$(sha256sum "$HOME/.pi/agent/settings.json")"
@@ -64,6 +83,8 @@ sed -i '/^LOCAL_AI_MODEL_NAME=/d;/^LOCAL_AI_API=/d;/^LOCAL_AI_THINKING_LEVELS=/d
   "$XDG_CONFIG_HOME/local-ai-pi-worker/config.env"
 printf '%s\n' '{"openai":{"apiKey":"existing","baseUrl":"http://gateway.example/v1/responses","model":"search-model"}}' \
   > "$HOME/.config/pi-web-search/config.json"
+mkdir -p "$XDG_STATE_HOME/local-ai-pi-worker"
+: > "$XDG_STATE_HOME/local-ai-pi-worker/legacy-skill-migrated"
 
 mock_log="$tmp_root/mock.log"
 export MOCK_LOG="$mock_log"
@@ -76,6 +97,7 @@ grep -q '^LOCAL_AI_MODEL_NAME=' "$XDG_CONFIG_HOME/local-ai-pi-worker/config.env"
 grep -q '^LOCAL_AI_API=' "$XDG_CONFIG_HOME/local-ai-pi-worker/config.env"
 grep -q '^LOCAL_AI_THINKING_LEVELS=' "$XDG_CONFIG_HOME/local-ai-pi-worker/config.env"
 grep -q '^PI_WORKER_DEFAULT_PROFILE=inspect' "$XDG_CONFIG_HOME/local-ai-pi-worker/config.env"
+grep -q '^PI_WORKER_MACHINE_SKILL_ROOT=' "$XDG_CONFIG_HOME/local-ai-pi-worker/config.env"
 grep -q '^PI_WORKER_UPDATE_REPO=onlinesourdough/local-ai-pi-worker' "$XDG_CONFIG_HOME/local-ai-pi-worker/config.env"
 grep -q '^PI_WORKER_UPDATE_NOTIFY=1' "$XDG_CONFIG_HOME/local-ai-pi-worker/config.env"
 if grep -q '^OPENCODEX_VERSION=\|^OPENCODEX_PORT=\|^PI_WORKER_CLOUD_MODELS=\|^PI_WORKER_DEFAULT_TOOLS=' \
@@ -86,7 +108,8 @@ fi
 test -x "$PI_WORKER_BIN_DIR/pi-worker"
 test -x "$PI_WORKER_BIN_DIR/pi-worker-sync"
 test -x "$PI_WORKER_BIN_DIR/pi-worker-update"
-test -f "$HOME/.agents/skills/orchestrate-pi-worker/SKILL.md"
+test -f "$CODEX_HOME/skills/orchestrate-pi-worker/SKILL.md"
+test ! -e "$HOME/.agents/skills/orchestrate-pi-worker"
 test ! -e "$XDG_DATA_HOME/local-ai-pi-worker/skills/bounded-worker"
 test -f "$XDG_DATA_HOME/local-ai-pi-worker/worker-system-prompt.txt"
 test -f "$XDG_DATA_HOME/local-ai-pi-worker/pi-agent/settings.json"
@@ -119,28 +142,28 @@ grep -q 'LOCAL_AI_RESOLVED_CONTEXT_WINDOW=131072' \
   "$XDG_STATE_HOME/local-ai-pi-worker/runtime.env"
 
 : > "$mock_log"
-update_status="$(MOCK_LATEST_VERSION=v0.5.0 "$PI_WORKER_BIN_DIR/pi-worker" --check-update)"
-grep -q 'Up to date: 0.5.0' <<< "$update_status"
+update_status="$(MOCK_LATEST_VERSION=v0.6.0 "$PI_WORKER_BIN_DIR/pi-worker" --check-update)"
+grep -q 'Up to date: 0.6.0' <<< "$update_status"
 jq -e '
-  .installed_version == "0.5.0"
-  and .latest_version == "0.5.0"
+  .installed_version == "0.6.0"
+  and .latest_version == "0.6.0"
   and .update_available == false
 ' "$XDG_STATE_HOME/local-ai-pi-worker/update.json" >/dev/null
 
-MOCK_LATEST_VERSION=v0.6.0 "$PI_WORKER_BIN_DIR/pi-worker-update" --notify
-grep -q 'NOTIFY_ARGS=.*0.5.0 -> 0.6.0' "$mock_log"
+MOCK_LATEST_VERSION=v0.7.0 "$PI_WORKER_BIN_DIR/pi-worker-update" --notify
+grep -q 'NOTIFY_ARGS=.*0.6.0 -> 0.7.0' "$mock_log"
 jq -e '
   .update_available == true
-  and .latest_version == "0.6.0"
-  and .last_notified_version == "0.6.0"
+  and .latest_version == "0.7.0"
+  and .last_notified_version == "0.7.0"
 ' "$XDG_STATE_HOME/local-ai-pi-worker/update.json" >/dev/null
 notification_count="$(grep -c '^NOTIFY_ARGS=' "$mock_log")"
-MOCK_LATEST_VERSION=v0.6.0 "$PI_WORKER_BIN_DIR/pi-worker-update" --notify
+MOCK_LATEST_VERSION=v0.7.0 "$PI_WORKER_BIN_DIR/pi-worker-update" --notify
 test "$(grep -c '^NOTIFY_ARGS=' "$mock_log")" == "$notification_count"
-grep -q 'Update available: 0.5.0 -> 0.6.0' \
+grep -q 'Update available: 0.6.0 -> 0.7.0' \
   <<< "$("$PI_WORKER_BIN_DIR/pi-worker-update" --status)"
 
-release_fixture="$tmp_root/release/local-ai-pi-worker-0.6.0"
+release_fixture="$tmp_root/release/local-ai-pi-worker-0.7.0"
 mkdir -p "$release_fixture"
 cp -a \
   "$repo_dir/install.sh" \
@@ -151,20 +174,20 @@ cp -a \
   "$repo_dir/worker" \
   "$repo_dir/VERSION" \
   "$release_fixture/"
-printf '%s\n' '0.6.0' > "$release_fixture/VERSION"
-release_tarball="$tmp_root/local-ai-pi-worker-v0.6.0.tar.gz"
-tar -czf "$release_tarball" -C "$tmp_root/release" local-ai-pi-worker-0.6.0
-if MOCK_LATEST_VERSION=v0.7.0 MOCK_RELEASE_TARBALL="$release_tarball" \
+printf '%s\n' '0.7.0' > "$release_fixture/VERSION"
+release_tarball="$tmp_root/local-ai-pi-worker-v0.7.0.tar.gz"
+tar -czf "$release_tarball" -C "$tmp_root/release" local-ai-pi-worker-0.7.0
+if MOCK_LATEST_VERSION=v0.8.0 MOCK_RELEASE_TARBALL="$release_tarball" \
   "$PI_WORKER_BIN_DIR/pi-worker" --update >/dev/null 2>&1; then
   printf '%s\n' 'updater accepted a release archive with mismatched VERSION' >&2
   exit 1
 fi
-grep -q '^0.5.0$' "$XDG_STATE_HOME/local-ai-pi-worker/version"
-MOCK_LATEST_VERSION=v0.6.0 MOCK_RELEASE_TARBALL="$release_tarball" \
-  "$PI_WORKER_BIN_DIR/pi-worker" --update >/dev/null
 grep -q '^0.6.0$' "$XDG_STATE_HOME/local-ai-pi-worker/version"
+MOCK_LATEST_VERSION=v0.7.0 MOCK_RELEASE_TARBALL="$release_tarball" \
+  "$PI_WORKER_BIN_DIR/pi-worker" --update >/dev/null
+grep -q '^0.7.0$' "$XDG_STATE_HOME/local-ai-pi-worker/version"
 test ! -e "$XDG_STATE_HOME/local-ai-pi-worker/update.json"
-grep -q 'CURL_ARGS=.*archive/refs/tags/v0.6.0.tar.gz' "$mock_log"
+grep -q 'CURL_ARGS=.*archive/refs/tags/v0.7.0.tar.gz' "$mock_log"
 
 catalog_hash="$(sha256sum "$XDG_DATA_HOME/local-ai-pi-worker/pi-agent/models.json")"
 : > "$mock_log"
@@ -174,7 +197,12 @@ test "$(sha256sum "$XDG_DATA_HOME/local-ai-pi-worker/pi-agent/models.json")" == 
 grep -q 'FIRECRAWL_API_KEY=unset FIRECRAWL_KEYLESS=0' "$mock_log"
 grep -q -- '--tools read,grep,find,ls' "$mock_log"
 grep -q -- "--skill $tmp_root/project/.agents/skills" "$mock_log"
+grep -q -- "--skill $HOME/.agents/skills/machine-review" "$mock_log"
 grep -q -- '--no-skills' "$mock_log"
+if grep -q -- "--skill $CODEX_HOME/skills/orchestrate-pi-worker" "$mock_log"; then
+  printf '%s\n' 'parent skill root leaked into the child' >&2
+  exit 1
+fi
 if grep -q -- '--no-context-files' "$mock_log"; then
   printf '%s\n' 'rooted repository context was unexpectedly disabled' >&2
   exit 1
@@ -285,8 +313,17 @@ grep -q -- '--no-context-files' "$mock_log"
 : > "$mock_log"
 MOCK_RUNTIME_CONTEXT=262144 "$PI_WORKER_BIN_DIR/pi-worker" \
   --cwd "$tmp_root/project" --no-skills --no-tools -- 'skill-free test' >/dev/null
-if grep -q -- "--skill $tmp_root/project/.agents/skills" "$mock_log"; then
-  printf '%s\n' 'project skills leaked into --no-skills invocation' >&2
+if grep -q -- '--skill' "$mock_log"; then
+  printf '%s\n' 'machine or project skills leaked into --no-skills invocation' >&2
+  exit 1
+fi
+
+: > "$mock_log"
+MOCK_RUNTIME_CONTEXT=262144 "$PI_WORKER_BIN_DIR/pi-worker" \
+  --cwd "$tmp_root/project" --no-global-skills --no-tools -- 'project-skills-only test' >/dev/null
+grep -q -- "--skill $tmp_root/project/.agents/skills" "$mock_log"
+if grep -q -- "--skill $HOME/.agents/skills/machine-review" "$mock_log"; then
+  printf '%s\n' 'machine skill leaked into --no-global-skills invocation' >&2
   exit 1
 fi
 
@@ -297,6 +334,7 @@ MOCK_RUNTIME_CONTEXT=262144 "$PI_WORKER_BIN_DIR/pi-worker" --health >/dev/null
 test ! -e "$PI_WORKER_BIN_DIR/pi-worker"
 test ! -e "$PI_WORKER_BIN_DIR/pi-worker-sync"
 test ! -e "$PI_WORKER_BIN_DIR/pi-worker-update"
+test ! -e "$CODEX_HOME/skills/orchestrate-pi-worker"
 test ! -e "$HOME/.agents/skills/orchestrate-pi-worker"
 test ! -e "$XDG_DATA_HOME/local-ai-pi-worker"
 test ! -e "$XDG_CONFIG_HOME/systemd/user/local-ai-pi-worker-update.service"

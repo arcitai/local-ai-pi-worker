@@ -26,8 +26,12 @@ Worker values:
 
 - `PI_WORKER_DEFAULT_PROFILE`: default capability profile. `inspect` is the
   minimal read-only default.
-- `PI_WORKER_SKILL_ROOT`: optional Agent Skills destination. Blank uses the
-  harness-neutral `~/.agents/skills` location.
+- `PI_WORKER_SKILL_ROOT`: parent orchestration-skill destination. Blank uses
+  `$CODEX_HOME/skills` (normally `~/.codex/skills`). Set it to another parent
+  harness's global Agent Skills-compatible directory when appropriate.
+- `PI_WORKER_MACHINE_SKILL_ROOT`: neutral machine-skill catalog exposed to
+  child workers. Blank uses `~/.agents/skills`. Keep it separate from the
+  parent orchestration-skill root.
 - `PI_WORKER_PROVIDER`, `PI_WORKER_MODEL`, `PI_WORKER_THINKING`,
   `PI_WORKER_PROFILE`, `PI_WORKER_TOOLS`, `PI_WORKER_SYSTEM_PROMPT`, and
   `PI_WORKER_JOB_ID`: per-process defaults useful to a parent harness.
@@ -39,11 +43,12 @@ Worker values:
 `--cwd` selects the worker's rooted work contract and the repository context Pi
 loads from `AGENTS.md`/`CLAUDE.md`. It is not an operating-system sandbox;
 tool policy and the parent remain responsible for enforcement. The launcher
-keeps global skills out, discovers project `.agents/skills` and `.pi/skills`
-from the selected Git-root hierarchy, and passes those catalogs to Pi with
-progressive disclosure. `--no-skills` disables that catalog; `--skill` forces
-one exceptional path. Use `--no-context-files` only for a deliberately
-context-free child.
+disables Pi's implicit skill discovery, then explicitly supplies valid skills
+from the machine root plus project `.agents/skills` and `.pi/skills` catalogs
+in the selected Git-root hierarchy. Pi retains progressive disclosure.
+`--no-global-skills` omits the machine catalog, `--no-skills` omits both
+catalogs, and `--skill` forces one exceptional path. Use `--no-context-files`
+only for a deliberately context-free child.
 
 Capability profiles are intentionally small:
 
@@ -57,7 +62,7 @@ Capability profiles are intentionally small:
 
 Use `--web` to add the optional web tools, `--tools` for a custom allowlist,
 and `--extension` only for reviewed local code. Profiles do not select model,
-context, reasoning, provider, goal, or project skills.
+context, reasoning, provider, goal, or skills.
 
 Context belongs to the runtime. Select 65,536, 131,072, or another supported
 value there. The next local `pi-worker` call compares the endpoint with its

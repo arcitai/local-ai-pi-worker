@@ -34,6 +34,8 @@ web_extension="${PI_WORKER_WEB_EXTENSION:-$pi_agent_dir/npm/node_modules/@tian.z
 web_policy=auto
 context_enabled=1
 project_skills_enabled=1
+global_skills_enabled=1
+global_skill_root="${PI_WORKER_MACHINE_SKILL_ROOT:-$HOME/.agents/skills}"
 workdir=""
 skill_paths=()
 extension_sources=()
@@ -59,7 +61,8 @@ usage() {
     '  --thinking LEVEL    off|minimal|low|medium|high|xhigh|max' \
     '  --profile NAME      none|inspect|research|edit|build (default: inspect)' \
     '  --skill PATH        Force one extra skill path (repeatable)' \
-    '  --no-skills         Ignore project .agents/.pi skill catalogs' \
+    '  --no-skills         Ignore machine and project skill catalogs' \
+    '  --no-global-skills  Ignore machine-global skills only' \
     '  --extension SOURCE  Load one audited Pi extension (repeatable)' \
     '  --no-context-files  Ignore project AGENTS.md/CLAUDE.md files' \
     '  --tools LIST        Override the profile with a Pi tool allowlist' \
@@ -165,6 +168,11 @@ while (($#)); do
       ;;
     --no-skills)
       project_skills_enabled=0
+      global_skills_enabled=0
+      shift
+      ;;
+    --no-global-skills)
+      global_skills_enabled=0
       shift
       ;;
     --extension)
@@ -334,6 +342,13 @@ if [[ -n "$workdir" ]]; then
   cd -- "$workdir"
 else
   workdir="$(pwd -P)"
+fi
+
+if ((global_skills_enabled)) && [[ -d "$global_skill_root" ]]; then
+  for global_skill in "$global_skill_root"/*; do
+    [[ -d "$global_skill" && -f "$global_skill/SKILL.md" ]] || continue
+    add_unique_path "$global_skill"
+  done
 fi
 
 if ((project_skills_enabled)); then

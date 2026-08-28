@@ -36,11 +36,13 @@ Profiles never select a provider, model, context window, role, or project
 skill. Add web to another profile with `--web`; use `--tools` only for a narrow
 custom allowlist. `--write` is a compatibility alias for `build`.
 
-Pi automatically receives `AGENTS.md`/`CLAUDE.md` and project `.agents/skills`
-or `.pi/skills` from the selected Git-root hierarchy. Only skill metadata is
-initially exposed; Pi reads matching skill bodies on demand. Use `--no-skills`
-for a deliberately skill-free child. Use `--skill PATH` only to force a
-relevant skill outside project discovery.
+Pi automatically receives `AGENTS.md`/`CLAUDE.md`, neutral machine skills from
+`~/.agents/skills`, and project `.agents/skills`/`.pi/skills` from the selected
+Git-root hierarchy. Only skill metadata is initially exposed; Pi reads matching
+bodies on demand. The orchestration skill itself belongs in the parent
+harness's separate global skill root. Use `--no-global-skills` to omit machine
+skills, `--no-skills` for a deliberately skill-free child, and `--skill PATH`
+only to force one relevant exception.
 
 Use `--extension SOURCE` only for a reviewed, task-required extension and pair
 it with the exact tool names in `--tools`. Extensions execute with the worker

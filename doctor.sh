@@ -12,7 +12,8 @@ pi_dir="$data_dir/pi-agent"
 systemd_user_dir="$config_home/systemd/user"
 update_service="$systemd_user_dir/local-ai-pi-worker-update.service"
 update_timer="$systemd_user_dir/local-ai-pi-worker-update.timer"
-skill_root="$HOME/.agents/skills"
+codex_home="${CODEX_HOME:-$HOME/.codex}"
+skill_root="$codex_home/skills"
 if [[ -r "$config_file" ]]; then
   # shellcheck disable=SC1090
   source "$config_file"

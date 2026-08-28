@@ -26,7 +26,7 @@ update_timer="$systemd_user_dir/local-ai-pi-worker-update.timer"
 web_config="$HOME/.config/pi-web-search/config.json"
 pi_auth="${PI_GLOBAL_AUTH_FILE:-$HOME/.pi/agent/auth.json}"
 
-skill_root="$HOME/.agents/skills"
+skill_root="$codex_home/skills"
 if [[ -r "$config_dir/config.env" ]]; then
   # shellcheck disable=SC1091
   # shellcheck disable=SC1090
@@ -34,6 +34,10 @@ if [[ -r "$config_dir/config.env" ]]; then
   skill_root="${PI_WORKER_SKILL_ROOT:-$skill_root}"
 fi
 skill_dir="$skill_root/orchestrate-pi-worker"
+skill_backup=orchestration-skill
+if [[ "$skill_dir" == "$codex_home/skills/orchestrate-pi-worker" ]]; then
+  skill_backup=codex-skill
+fi
 
 restore_path() {
   local target="$1"
@@ -60,12 +64,7 @@ fi
 restore_path "$bin_dir/pi-worker" pi-worker
 restore_path "$bin_dir/pi-worker-sync" pi-worker-sync
 restore_path "$bin_dir/pi-worker-update" pi-worker-update
-restore_path "$skill_dir" orchestration-skill
-# Finish cleanup for installations upgraded from the original private skill
-# location. This is migration compatibility, not a Codex dependency.
-if [[ ! -e "$state_dir/legacy-skill-migrated" ]]; then
-  restore_path "$codex_home/skills/orchestrate-pi-worker" codex-skill
-fi
+restore_path "$skill_dir" "$skill_backup"
 restore_path "$web_config" pi-web-search.json
 restore_path "$pi_auth" pi-auth.json
 restore_path "$update_service" update-service

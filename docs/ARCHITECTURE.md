@@ -35,10 +35,12 @@ than rebuilding a Codex-like harness. `inspect` is the default; web, writes,
 shell, and additional extensions are independent opt-ins.
 
 Project `AGENTS.md`/`CLAUDE.md` files load from the rooted cwd. The launcher
-keeps global skill discovery off, then adds only `.agents/skills` and
-`.pi/skills` catalogs from the selected Git-root hierarchy. Pi exposes their
-metadata first and loads matching bodies on demand. This preserves project
-methods without injecting the parent orchestration skill into the child.
+keeps Pi's implicit skill discovery off, then adds valid neutral machine skills
+from `~/.agents/skills` and project `.agents/skills`/`.pi/skills` catalogs from
+the selected Git-root hierarchy. Pi exposes metadata first and loads matching
+bodies on demand. The parent orchestration skill is installed in a separate
+parent-harness root—Codex `~/.codex/skills` by default—so it is not injected
+into the child.
 
 Runtime capabilities flow one way. The endpoint publishes its active context;
 `pi-worker-sync` validates it and writes the same value to Pi's dedicated

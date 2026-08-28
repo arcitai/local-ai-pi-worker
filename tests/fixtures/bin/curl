@@ -6,7 +6,7 @@ if [[ "${MOCK_CURL_FAIL:-0}" == 1 ]]; then
   exit 22
 fi
 if [[ "$*" == *'api.github.com/repos/'*'/releases/latest'* ]]; then
-  latest="${MOCK_LATEST_VERSION:-v0.5.0}"
+  latest="${MOCK_LATEST_VERSION:-v0.6.0}"
   printf '{"tag_name":"%s","html_url":"https://github.com/onlinesourdough/local-ai-pi-worker/releases/tag/%s"}\n' \
     "$latest" "$latest"
   exit 0

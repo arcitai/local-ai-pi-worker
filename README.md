@@ -22,7 +22,8 @@ profile from 65K to 128K changes the worker on its next invocation.
 - `pi-worker-sync`, which discovers and atomically updates the local catalog;
 - `pi-worker-update`, which checks and applies stable GitHub releases;
 - a 75-word child system guard with no always-loaded child skill;
-- the portable `orchestrate-pi-worker` skill under `~/.agents/skills`;
+- the portable `orchestrate-pi-worker` skill in the parent harness's global
+  skill root (Codex `~/.codex/skills` by default);
 - optional credential-aware web tools: Monid is primary when configured;
   otherwise the configured provider search is primary. Direct fetch remains
   available and Firecrawl keyless is disabled;
@@ -46,9 +47,17 @@ cd local-ai-pi-worker
 ```
 
 Edit `~/.config/local-ai-pi-worker/config.env` and rerun `./install.sh` for a
-different endpoint, model ID, API dialect, reasoning levels, or skill root.
+different endpoint, model ID, API dialect, reasoning levels, or skill roots.
 Context normally has no integration setting: it is read from `/v1/models`.
 See [configuration](docs/CONFIGURATION.md).
+
+The orchestration skill belongs to the parent, not the child. Installation
+defaults its destination to `$CODEX_HOME/skills` (normally
+`~/.codex/skills`). Set `PI_WORKER_SKILL_ROOT` to another harness's global
+Agent Skills-compatible directory before reinstalling when that harness is the
+parent. `PI_WORKER_MACHINE_SKILL_ROOT` separately controls which neutral
+machine skills children receive and defaults to `~/.agents/skills`; keep these
+roots separate.
 
 If an agent is doing the setup, point it at [AGENTS.md](AGENTS.md). That file
 defines the package boundary and the exact install, audit, and release checks.
@@ -113,22 +122,25 @@ and built-in code tools; this package does not recreate them. The assignment's
 session is its continuation mechanism. Lifecycle state remains in the parent.
 
 Repository `AGENTS.md`/`CLAUDE.md` instructions load from the selected cwd.
-Project `.agents/skills` and `.pi/skills` are discovered only inside that Git
-root and use Pi's progressive disclosure: descriptions are cataloged, while
-matching bodies load on demand. Global skills—including the parent delegation
-skill—stay excluded from the child. Use `--no-skills` for zero project skills;
-reserve `--skill PATH` for one capability outside normal project discovery.
+Neutral machine skills from `~/.agents/skills` plus project `.agents/skills`
+and `.pi/skills` inside the selected Git root are supplied explicitly. Pi keeps
+progressive disclosure: descriptions are cataloged, while matching bodies load
+on demand. The parent-only orchestration skill lives in the parent harness's
+separate global root and is therefore not in the child catalog. Use
+`--no-global-skills` to omit the machine catalog, `--no-skills` to omit both
+machine and project catalogs, and `--skill PATH` for one explicit exception.
 
 The bundled skill teaches an Agent Skills-compatible parent when and how to use
 both modes. A parent Pi session may itself use OpenAI while delegating to the
 local model; a different parent can invoke the same CLI if it can run a process
-and consume stdout. Set `PI_WORKER_SKILL_ROOT` when a harness uses another
-global skill directory.
+and consume stdout. Install the skill in that parent's own global skill root.
 
 The ordinary `pi` command and its general config are unchanged. Only
-`pi-worker` exports the dedicated Pi home and disables global skills, implicit
-extensions, prompts, and themes. Its rooted repository context and skills
-remain intact; `--no-context-files` and `--no-skills` disable them independently.
+`pi-worker` exports the dedicated Pi home and disables Pi's implicit skill,
+extension, prompt, and theme discovery. It then injects the separate
+machine/project skill catalogs explicitly, preserving progressive disclosure
+and predictable scope. `--no-context-files`, `--no-global-skills`, and
+`--no-skills` provide independent escape hatches.
 
 The CLI also accepts `--provider NAME --model ID`. That is an escape hatch for
 providers available to the dedicated worker through environment credentials or

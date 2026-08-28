@@ -37,12 +37,14 @@ Safety is established before RPC starts:
 - the default `inspect` profile exposes only read/grep/find/ls;
 - `research`, `edit`, and `build` opt into web, file mutation, and shell in
   separate steps;
-- global skills, prompts, themes, and implicit extensions are disabled;
-- project skill directories are supplied explicitly by the launcher and remain
-  progressively disclosed; `--no-skills` removes even those catalogs;
+- implicit skills, prompts, themes, and extensions are disabled;
+- neutral machine skills and project skill directories are supplied explicitly
+  by the launcher and remain progressively disclosed; `--no-global-skills`
+  removes the machine catalog and `--no-skills` removes both catalogs;
 - repository `AGENTS.md`/`CLAUDE.md` files are loaded from the selected cwd by
   default, while `--no-context-files` provides a context-free escape hatch;
-- the parent orchestration skill and removed child wrapper are not loaded;
+- the parent orchestration skill is stored in the parent's separate skill root
+  and the removed child wrapper is not loaded;
 - the local runtime/catalog check runs quietly before protocol output begins.
 
 For applications, prefer this mapping:
