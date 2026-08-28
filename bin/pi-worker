@@ -1,0 +1,182 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+data_home="${XDG_DATA_HOME:-$HOME/.local/share}"
+config_home="${XDG_CONFIG_HOME:-$HOME/.config}"
+worker_dir="${PI_WORKER_DATA_DIR:-$data_home/local-ai-pi-worker}"
+worker_config="${PI_WORKER_CONFIG:-$config_home/local-ai-pi-worker/config.env}"
+
+if [[ -r "$worker_config" ]]; then
+  # shellcheck disable=SC1090
+  source "$worker_config"
+fi
+
+provider="${PI_WORKER_PROVIDER:-opencodex}"
+model="${PI_WORKER_MODEL:-local-ai/${LOCAL_AI_MODEL_ID:-qwen3.8-27b-local}}"
+thinking="${PI_WORKER_THINKING:-${LOCAL_AI_DEFAULT_REASONING:-medium}}"
+tools="${PI_WORKER_TOOLS:-${PI_WORKER_DEFAULT_TOOLS:-read,grep,find,ls,web_search,web_fetch}}"
+mode="${PI_WORKER_MODE:-text}"
+pi_agent_dir="${PI_WORKER_PI_DIR:-$worker_dir/pi-agent}"
+web_extension="${PI_WORKER_WEB_EXTENSION:-$pi_agent_dir/npm/node_modules/@tian.zuo/pi-web-search/index.ts}"
+web_enabled=1
+system_prompt="${PI_WORKER_SYSTEM_PROMPT:-You are a delegated worker. Complete only the assigned bounded task. Use tools only when needed. Return concise findings with concrete file paths, source links, or other evidence and state uncertainty explicitly. Do not modify files unless write tools are enabled and the task explicitly requests it.}"
+
+usage() {
+  printf '%s\n' \
+    'Usage: pi-worker [options] [--] <task>' \
+    '       <task on stdin> | pi-worker [options]' \
+    '' \
+    'Options:' \
+    '  --provider NAME     Pi provider exported by OpenCodex (default: opencodex)' \
+    '  --model ID          OpenCodex model, with provider prefix when needed' \
+    '  --thinking LEVEL    off|minimal|low|medium|high|xhigh|max' \
+    '  --tools LIST        Pi tool allowlist' \
+    '  --no-tools          Disable every tool' \
+    '  --no-web            Disable web_search and web_fetch' \
+    '  --write             Enable scoped filesystem and shell mutation tools' \
+    '  --json              Emit Pi JSONL events' \
+    '  --text              Emit only final text' \
+    '  --system-prompt TXT Override the minimal worker prompt' \
+    '  --web-setup         Start Pi interactively; run /websearch-auth for Monid' \
+    '  --health            Verify OpenCodex and list routed models' \
+    '  -h, --help          Show this help'
+}
+
+remove_tool() {
+  local list=",$1,"
+  local name="$2"
+  list="${list//,$name,/,}"
+  list="${list#,}"
+  list="${list%,}"
+  printf '%s' "$list"
+}
+
+while (($#)); do
+  case "$1" in
+    --provider)
+      provider="${2:?missing value for --provider}"
+      shift 2
+      ;;
+    --model)
+      model="${2:?missing value for --model}"
+      shift 2
+      ;;
+    --thinking)
+      thinking="${2:?missing value for --thinking}"
+      shift 2
+      ;;
+    --tools)
+      tools="${2:?missing value for --tools}"
+      shift 2
+      ;;
+    --no-tools)
+      tools=""
+      web_enabled=0
+      shift
+      ;;
+    --no-web)
+      web_enabled=0
+      shift
+      ;;
+    --write)
+      tools="read,bash,edit,write,grep,find,ls,web_search,web_fetch"
+      shift
+      ;;
+    --json)
+      mode="json"
+      shift
+      ;;
+    --text)
+      mode="text"
+      shift
+      ;;
+    --system-prompt)
+      system_prompt="${2:?missing value for --system-prompt}"
+      shift 2
+      ;;
+    --web-setup)
+      export PI_CODING_AGENT_DIR="$pi_agent_dir"
+      export PI_TELEMETRY=0 PI_SKIP_VERSION_CHECK=1 FIRECRAWL_KEYLESS=0
+      unset FIRECRAWL_API_KEY
+      exec pi --no-extensions --extension "$web_extension"
+      ;;
+    --health)
+      ocx health --json
+      export PI_CODING_AGENT_DIR="$pi_agent_dir"
+      exec pi --list-models "$provider"
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --)
+      shift
+      break
+      ;;
+    -*)
+      printf 'pi-worker: unknown option: %s\n' "$1" >&2
+      usage >&2
+      exit 2
+      ;;
+    *)
+      break
+      ;;
+  esac
+done
+
+if (($#)); then
+  task="$*"
+elif [[ ! -t 0 ]]; then
+  task="$(</dev/stdin)"
+else
+  printf 'pi-worker: provide a task as arguments or on stdin\n' >&2
+  usage >&2
+  exit 2
+fi
+
+if [[ -z "${task//[[:space:]]/}" ]]; then
+  printf 'pi-worker: task must not be empty\n' >&2
+  exit 2
+fi
+
+if ((web_enabled)); then
+  if [[ ! -f "$web_extension" ]]; then
+    printf 'pi-worker: web extension not found: %s\n' "$web_extension" >&2
+    exit 1
+  fi
+else
+  tools="$(remove_tool "$tools" web_search)"
+  tools="$(remove_tool "$tools" web_fetch)"
+fi
+
+export PI_CODING_AGENT_DIR="$pi_agent_dir"
+export PI_TELEMETRY=0 PI_SKIP_VERSION_CHECK=1 FIRECRAWL_KEYLESS=0
+unset FIRECRAWL_API_KEY
+
+args=(
+  --provider "$provider"
+  --model "$model"
+  --thinking "$thinking"
+  --mode "$mode"
+  --print
+  --no-session
+  --no-extensions
+  --no-skills
+  --no-prompt-templates
+  --no-context-files
+  --no-themes
+  --offline
+  --system-prompt "$system_prompt"
+)
+
+if ((web_enabled)); then
+  args+=(--extension "$web_extension")
+fi
+
+if [[ -n "$tools" ]]; then
+  args+=(--tools "$tools")
+else
+  args+=(--no-tools)
+fi
+
+exec pi "${args[@]}" "$task"

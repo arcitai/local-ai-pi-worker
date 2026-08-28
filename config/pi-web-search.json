@@ -1,0 +1,18 @@
+{
+  "searchOrder": [
+    "monid",
+    "openai"
+  ],
+  "fetchOrder": [
+    "monid",
+    "direct"
+  ],
+  "firecrawl": {
+    "keyless": false
+  },
+  "openai": {
+    "apiKey": "opencodex-loopback",
+    "baseUrl": "http://127.0.0.1:10100/v1/responses",
+    "model": "gpt-5.6-luna"
+  }
+}

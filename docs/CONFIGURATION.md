@@ -1,0 +1,31 @@
+# Configuration
+
+The installer creates `~/.config/local-ai-pi-worker/config.env` from
+`config/defaults.env`. Edit that machine-local file and rerun `./install.sh`.
+No repository path or model storage path is embedded in the installed setup.
+
+Important values:
+
+- `LOCAL_AI_BASE_URL`: OpenAI-compatible endpoint exposed by the local runtime.
+- `LOCAL_AI_MODEL_ID`: model ID returned by `/v1/models`.
+- `LOCAL_AI_API_KEY`: optional explicit runtime key. Blank preserves an
+  existing provider key or discovers it from a matching running llama-server.
+- `LOCAL_AI_CONTEXT_WINDOW`: maximum runtime context; defaults to 65,536.
+- `LOCAL_AI_MAX_OUTPUT_TOKENS`: conservative worker output cap.
+- `PI_WORKER_CLOUD_MODELS`: comma-separated cloud models exposed for manual use.
+- `PI_WEB_SEARCH_MODEL`: cloud model used by the OpenCodex-backed search tool.
+- `CODEX_WEB_SEARCH_MODEL`: native cloud sidecar for Codex web-search calls.
+- `CODEX_VISION_MODEL`: native cloud sidecar that describes Codex image input
+  for the text-only local model.
+
+The installer never stores provider secrets in this repository. To make Monid
+the first web provider, run `pi-worker --web-setup`, enter
+`/websearch-auth`, and add a Monid API key. Without that key, search uses the
+OpenCodex-backed provider and fetch uses direct HTTP. Firecrawl remains off.
+
+Useful overrides for one invocation:
+
+```bash
+PI_WORKER_MODEL=gpt-5.6-luna pi-worker --thinking high -- 'Review this design.'
+PI_WORKER_TOOLS=read,grep,find,ls pi-worker -- 'Inspect this repository.'
+```

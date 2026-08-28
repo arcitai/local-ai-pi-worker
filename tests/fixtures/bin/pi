@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+printf 'PI_DIR=%s FIRECRAWL_API_KEY=%s FIRECRAWL_KEYLESS=%s ARGS=%s\n' \
+  "${PI_CODING_AGENT_DIR:-unset}" \
+  "${FIRECRAWL_API_KEY:-unset}" \
+  "${FIRECRAWL_KEYLESS:-unset}" \
+  "$*" >> "$MOCK_LOG"
