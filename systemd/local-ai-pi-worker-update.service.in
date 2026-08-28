@@ -1,0 +1,8 @@
+[Unit]
+Description=Check for Local AI Pi Worker updates
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart="@PI_WORKER_UPDATE_BIN@" --notify

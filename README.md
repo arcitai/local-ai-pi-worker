@@ -20,11 +20,14 @@ profile from 65K to 128K changes the worker on its next invocation.
 - a dedicated Pi home under `~/.local/share/local-ai-pi-worker/pi-agent`;
 - `pi-worker`, a read-only-by-default one-shot and RPC worker CLI;
 - `pi-worker-sync`, which discovers and atomically updates the local catalog;
+- `pi-worker-update`, which checks and applies stable GitHub releases;
 - a 75-word child system guard with no always-loaded child skill;
 - the portable `orchestrate-pi-worker` skill under `~/.agents/skills`;
 - optional credential-aware web tools: Monid is primary when configured;
   otherwise the configured provider search is primary. Direct fetch remains
-  available and Firecrawl keyless is disabled.
+  available and Firecrawl keyless is disabled;
+- a daily systemd user timer that sends one desktop notification per new
+  release without keeping a background process alive.
 
 Nothing is written to general Pi settings. The web extension currently uses
 its upstream shared config/auth paths; the installer backs those files up and
@@ -163,6 +166,29 @@ loopback.
 Pi extensions run as local code with the worker's OS permissions. Additional
 extensions are never auto-discovered; pass a reviewed source with `--extension`
 and allow only its required tool names with `--tools`.
+
+## Updates
+
+Installed copies check the latest stable GitHub release once per day through a
+short-lived systemd user timer. A new release produces one desktop notification
+and a cached status; normal worker calls never perform a network update check.
+An interactive worker terminal may show that cached notice, while JSON and RPC
+streams stay unchanged.
+
+```bash
+pi-worker --check-update  # force a network check now
+pi-worker --update        # download, verify, and install the newest release
+pi-worker-update --status # read only the cached result
+```
+
+The updater accepts only stable GitHub release metadata, checks the archive has
+one expected root, verifies its `VERSION` matches the release tag, and then
+runs the release's installer. It never updates automatically. This is a shell
+distribution, so npm publishing is not required.
+
+Set `PI_WORKER_UPDATE_NOTIFY=0` in the machine config and rerun `./install.sh`
+to disable the timer while retaining manual checks. A maintained fork can set
+`PI_WORKER_UPDATE_REPO=owner/repository`.
 
 ## Optional gateways
 

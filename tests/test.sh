@@ -11,8 +11,12 @@ for script in \
   "$repo_dir/doctor.sh" \
   "$repo_dir/bin/pi-worker" \
   "$repo_dir/bin/pi-worker-sync" \
+  "$repo_dir/bin/pi-worker-update" \
   "$repo_dir/tests/fixtures/bin/curl" \
-  "$repo_dir/tests/fixtures/bin/pi"; do
+  "$repo_dir/tests/fixtures/bin/mise" \
+  "$repo_dir/tests/fixtures/bin/pi" \
+  "$repo_dir/tests/fixtures/bin/systemctl" \
+  "$repo_dir/tests/fixtures/bin/notify-send"; do
   bash -n "$script"
 done
 
@@ -72,6 +76,8 @@ grep -q '^LOCAL_AI_MODEL_NAME=' "$XDG_CONFIG_HOME/local-ai-pi-worker/config.env"
 grep -q '^LOCAL_AI_API=' "$XDG_CONFIG_HOME/local-ai-pi-worker/config.env"
 grep -q '^LOCAL_AI_THINKING_LEVELS=' "$XDG_CONFIG_HOME/local-ai-pi-worker/config.env"
 grep -q '^PI_WORKER_DEFAULT_PROFILE=inspect' "$XDG_CONFIG_HOME/local-ai-pi-worker/config.env"
+grep -q '^PI_WORKER_UPDATE_REPO=onlinesourdough/local-ai-pi-worker' "$XDG_CONFIG_HOME/local-ai-pi-worker/config.env"
+grep -q '^PI_WORKER_UPDATE_NOTIFY=1' "$XDG_CONFIG_HOME/local-ai-pi-worker/config.env"
 if grep -q '^OPENCODEX_VERSION=\|^OPENCODEX_PORT=\|^PI_WORKER_CLOUD_MODELS=\|^PI_WORKER_DEFAULT_TOOLS=' \
   "$XDG_CONFIG_HOME/local-ai-pi-worker/config.env"; then
   printf '%s\n' 'legacy config fields survived migration' >&2
@@ -79,10 +85,16 @@ if grep -q '^OPENCODEX_VERSION=\|^OPENCODEX_PORT=\|^PI_WORKER_CLOUD_MODELS=\|^PI
 fi
 test -x "$PI_WORKER_BIN_DIR/pi-worker"
 test -x "$PI_WORKER_BIN_DIR/pi-worker-sync"
+test -x "$PI_WORKER_BIN_DIR/pi-worker-update"
 test -f "$HOME/.agents/skills/orchestrate-pi-worker/SKILL.md"
 test ! -e "$XDG_DATA_HOME/local-ai-pi-worker/skills/bounded-worker"
 test -f "$XDG_DATA_HOME/local-ai-pi-worker/worker-system-prompt.txt"
 test -f "$XDG_DATA_HOME/local-ai-pi-worker/pi-agent/settings.json"
+test -f "$XDG_CONFIG_HOME/systemd/user/local-ai-pi-worker-update.service"
+test -f "$XDG_CONFIG_HOME/systemd/user/local-ai-pi-worker-update.timer"
+grep -q "ExecStart=\"$PI_WORKER_BIN_DIR/pi-worker-update\" --notify" \
+  "$XDG_CONFIG_HOME/systemd/user/local-ai-pi-worker-update.service"
+grep -q 'SYSTEMCTL_ARGS=--user enable --now local-ai-pi-worker-update.timer' "$mock_log"
 jq -e '
   .openai.baseUrl == "http://gateway.example/v1/responses"
   and .firecrawl.keyless == false
@@ -105,6 +117,54 @@ jq -e '
 ' "$XDG_DATA_HOME/local-ai-pi-worker/pi-agent/models.json" >/dev/null
 grep -q 'LOCAL_AI_RESOLVED_CONTEXT_WINDOW=131072' \
   "$XDG_STATE_HOME/local-ai-pi-worker/runtime.env"
+
+: > "$mock_log"
+update_status="$(MOCK_LATEST_VERSION=v0.5.0 "$PI_WORKER_BIN_DIR/pi-worker" --check-update)"
+grep -q 'Up to date: 0.5.0' <<< "$update_status"
+jq -e '
+  .installed_version == "0.5.0"
+  and .latest_version == "0.5.0"
+  and .update_available == false
+' "$XDG_STATE_HOME/local-ai-pi-worker/update.json" >/dev/null
+
+MOCK_LATEST_VERSION=v0.6.0 "$PI_WORKER_BIN_DIR/pi-worker-update" --notify
+grep -q 'NOTIFY_ARGS=.*0.5.0 -> 0.6.0' "$mock_log"
+jq -e '
+  .update_available == true
+  and .latest_version == "0.6.0"
+  and .last_notified_version == "0.6.0"
+' "$XDG_STATE_HOME/local-ai-pi-worker/update.json" >/dev/null
+notification_count="$(grep -c '^NOTIFY_ARGS=' "$mock_log")"
+MOCK_LATEST_VERSION=v0.6.0 "$PI_WORKER_BIN_DIR/pi-worker-update" --notify
+test "$(grep -c '^NOTIFY_ARGS=' "$mock_log")" == "$notification_count"
+grep -q 'Update available: 0.5.0 -> 0.6.0' \
+  <<< "$("$PI_WORKER_BIN_DIR/pi-worker-update" --status)"
+
+release_fixture="$tmp_root/release/local-ai-pi-worker-0.6.0"
+mkdir -p "$release_fixture"
+cp -a \
+  "$repo_dir/install.sh" \
+  "$repo_dir/bin" \
+  "$repo_dir/config" \
+  "$repo_dir/skills" \
+  "$repo_dir/systemd" \
+  "$repo_dir/worker" \
+  "$repo_dir/VERSION" \
+  "$release_fixture/"
+printf '%s\n' '0.6.0' > "$release_fixture/VERSION"
+release_tarball="$tmp_root/local-ai-pi-worker-v0.6.0.tar.gz"
+tar -czf "$release_tarball" -C "$tmp_root/release" local-ai-pi-worker-0.6.0
+if MOCK_LATEST_VERSION=v0.7.0 MOCK_RELEASE_TARBALL="$release_tarball" \
+  "$PI_WORKER_BIN_DIR/pi-worker" --update >/dev/null 2>&1; then
+  printf '%s\n' 'updater accepted a release archive with mismatched VERSION' >&2
+  exit 1
+fi
+grep -q '^0.5.0$' "$XDG_STATE_HOME/local-ai-pi-worker/version"
+MOCK_LATEST_VERSION=v0.6.0 MOCK_RELEASE_TARBALL="$release_tarball" \
+  "$PI_WORKER_BIN_DIR/pi-worker" --update >/dev/null
+grep -q '^0.6.0$' "$XDG_STATE_HOME/local-ai-pi-worker/version"
+test ! -e "$XDG_STATE_HOME/local-ai-pi-worker/update.json"
+grep -q 'CURL_ARGS=.*archive/refs/tags/v0.6.0.tar.gz' "$mock_log"
 
 catalog_hash="$(sha256sum "$XDG_DATA_HOME/local-ai-pi-worker/pi-agent/models.json")"
 : > "$mock_log"
@@ -236,8 +296,11 @@ MOCK_RUNTIME_CONTEXT=262144 "$PI_WORKER_BIN_DIR/pi-worker" --health >/dev/null
 "$repo_dir/uninstall.sh" >/dev/null
 test ! -e "$PI_WORKER_BIN_DIR/pi-worker"
 test ! -e "$PI_WORKER_BIN_DIR/pi-worker-sync"
+test ! -e "$PI_WORKER_BIN_DIR/pi-worker-update"
 test ! -e "$HOME/.agents/skills/orchestrate-pi-worker"
 test ! -e "$XDG_DATA_HOME/local-ai-pi-worker"
+test ! -e "$XDG_CONFIG_HOME/systemd/user/local-ai-pi-worker-update.service"
+test ! -e "$XDG_CONFIG_HOME/systemd/user/local-ai-pi-worker-update.timer"
 jq -e '
   .openai.baseUrl == "http://gateway.example/v1/responses"
   and (has("searchOrder") | not)

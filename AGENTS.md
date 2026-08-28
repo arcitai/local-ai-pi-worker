@@ -4,7 +4,8 @@
 
 Maintain this repository as a small, harness-neutral local Pi worker package.
 It owns the dedicated Pi config, direct local runtime catalog, `pi-worker` CLI
-and RPC contract, worker tools/policy, and the bundled delegation skill.
+and RPC contract, worker tools/policy, stable release updater, and the bundled
+delegation skill.
 
 Do not add or configure a parent harness, desktop app, model runtime, GPU stack,
 cloud account, provider gateway, or model. OpenCodex can be recommended as an
@@ -24,7 +25,8 @@ parent-specific session IDs.
 
 Normal local invocations self-synchronize. Do not tell the user to run
 `pi-worker --sync` after every runtime profile change; it is a forced recovery
-command.
+command. Release checks stay outside inference: use `--check-update` for an
+explicit check and keep the daily timer short-lived.
 
 ## Worker contract
 
@@ -53,7 +55,7 @@ Before release, run:
 
 ```bash
 ./tests/test.sh
-shellcheck install.sh uninstall.sh doctor.sh bin/pi-worker bin/pi-worker-sync
+shellcheck install.sh uninstall.sh doctor.sh bin/pi-worker bin/pi-worker-sync bin/pi-worker-update
 python3 ~/.codex/skills/.system/skill-creator/scripts/quick_validate.py skills/orchestrate-pi-worker
 git diff --check
 ./install.sh --skip-packages

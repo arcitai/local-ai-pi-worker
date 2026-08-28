@@ -6,7 +6,7 @@ gateway.
 | Layer | Owns | Does not own |
 | --- | --- | --- |
 | Local runtime or machine plugin | Model process, profiles, context, GPU tuning and model lifecycle | Pi policy or parent orchestration |
-| This repository | Dedicated Pi config, direct local-provider catalog, worker CLI/RPC, safe tool policy and portable delegation skill | Runtime, parent app, general Pi config, cloud auth or gateway |
+| This repository | Dedicated Pi config, direct local-provider catalog, worker CLI/RPC, safe tool policy, release updater and portable delegation skill | Runtime, parent app, general Pi config, cloud auth or gateway |
 | Parent harness or app | Task decomposition, worker process lifecycle, approvals, result verification and user interaction | Worker model internals |
 | Optional gateway | Unified catalogs, auth forwarding or modality sidecars | This worker's policy and tools |
 
@@ -49,6 +49,13 @@ omit context metadata.
 The local model is natively text-only and is advertised as such. Image
 description or vision remains an optional responsibility of a parent/gateway;
 this package never makes a text model appear multimodal.
+
+Release discovery is intentionally outside the inference path. A daily
+systemd user timer starts one short update-check process, caches the stable
+GitHub release result, optionally notifies the desktop, and exits. It never
+updates automatically. Interactive terminals may read the cache; machine
+protocols receive no extra stdout. Manual application validates tag/version
+agreement before handing control to the release installer.
 
 One local worker should run at a time when the runtime has one inference slot.
 The parent owns scheduling and may queue additional local tasks. A worker

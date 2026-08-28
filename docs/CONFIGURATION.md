@@ -31,6 +31,10 @@ Worker values:
 - `PI_WORKER_PROVIDER`, `PI_WORKER_MODEL`, `PI_WORKER_THINKING`,
   `PI_WORKER_PROFILE`, `PI_WORKER_TOOLS`, `PI_WORKER_SYSTEM_PROMPT`, and
   `PI_WORKER_JOB_ID`: per-process defaults useful to a parent harness.
+- `PI_WORKER_UPDATE_REPO`: stable GitHub release source in `owner/repository`
+  form. It defaults to this repository and can point at a maintained fork.
+- `PI_WORKER_UPDATE_NOTIFY`: `1` installs/enables the daily systemd user timer;
+  `0` keeps only manual `--check-update` and `--update` commands.
 
 `--cwd` selects the worker's rooted work contract and the repository context Pi
 loads from `AGENTS.md`/`CLAUDE.md`. It is not an operating-system sandbox;
@@ -71,6 +75,12 @@ Web is opt-in. Monid is the preferred search/fetch provider only when
 filters unconfigured providers out of the active chain, so an independently
 configured provider search becomes primary when Monid is absent; fetch falls
 back to direct HTTP. Firecrawl keyless remains disabled.
+
+Update checks are separate from model/runtime synchronization. The timer and
+`--check-update` contact only the GitHub Releases API and cache non-secret
+status in `~/.local/state/local-ai-pi-worker/update.json`. Worker inference
+never waits for that network request. `--update` must be invoked explicitly;
+it installs only a release archive whose version matches its stable tag.
 
 Examples:
 

@@ -9,6 +9,9 @@ data_dir="$data_home/local-ai-pi-worker"
 config_file="$config_home/local-ai-pi-worker/config.env"
 runtime_file="$state_home/local-ai-pi-worker/runtime.env"
 pi_dir="$data_dir/pi-agent"
+systemd_user_dir="$config_home/systemd/user"
+update_service="$systemd_user_dir/local-ai-pi-worker-update.service"
+update_timer="$systemd_user_dir/local-ai-pi-worker-update.timer"
 skill_root="$HOME/.agents/skills"
 if [[ -r "$config_file" ]]; then
   # shellcheck disable=SC1090
@@ -32,9 +35,12 @@ check_file "$config_file" 'machine config'
 check_file "$runtime_file" 'resolved runtime metadata'
 check_file "$bin_dir/pi-worker" 'worker CLI'
 check_file "$bin_dir/pi-worker-sync" 'runtime catalog synchronizer'
+check_file "$bin_dir/pi-worker-update" 'release updater'
 check_file "$pi_dir/settings.json" 'dedicated Pi settings'
 check_file "$pi_dir/models.json" 'dedicated Pi model catalog'
 check_file "$skill_dir/SKILL.md" 'portable orchestration skill'
+check_file "$update_service" 'update notification service'
+check_file "$update_timer" 'update notification timer'
 
 if [[ -x "$bin_dir/pi-worker-sync" ]] && "$bin_dir/pi-worker-sync" --ensure --quiet; then
   pass 'runtime and worker catalog synchronized'
@@ -90,6 +96,16 @@ else
 fi
 
 pi_auth="${PI_GLOBAL_AUTH_FILE:-$HOME/.pi/agent/auth.json}"
+if [[ -n "${MONID_API_KEY:-}" ]] \
+  || { [[ -f "$pi_auth" ]] \
+    && jq -e '."websearch-monid".key | strings | startswith("monid_live_")' \
+      "$pi_auth" >/dev/null 2>&1; }; then
+  pass 'Monid web-search credential configured'
+elif jq -e '.openai.baseUrl and .openai.model' "$web_config" >/dev/null 2>&1; then
+  pass 'Monid credential absent; configured provider search is the fallback'
+else
+  pass 'Monid credential absent; web search remains optional'
+fi
 if [[ ! -f "$pi_auth" ]] || ! jq -e 'has("websearch-firecrawl")' "$pi_auth" >/dev/null 2>&1; then
   pass 'no stored Firecrawl credential'
 else
@@ -102,6 +118,20 @@ if command -v pi >/dev/null \
   pass 'Pi can load the dedicated local provider'
 else
   fail 'Pi dedicated provider catalog'
+fi
+
+if [[ "${PI_WORKER_UPDATE_NOTIFY:-1}" == 1 ]]; then
+  if command -v systemctl >/dev/null \
+    && systemctl --user is-enabled local-ai-pi-worker-update.timer >/dev/null 2>&1; then
+    pass 'daily update notification timer enabled'
+  elif command -v systemctl >/dev/null \
+    && systemctl --user show-environment >/dev/null 2>&1; then
+    fail 'daily update notification timer enabled'
+  else
+    pass 'systemd user manager unavailable; manual update check remains available'
+  fi
+else
+  pass 'automatic update notifications disabled by machine config'
 fi
 
 if [[ "$failures" -gt 0 ]]; then

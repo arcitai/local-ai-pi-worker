@@ -4,8 +4,11 @@ set -euo pipefail
 worker_bin_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 data_home="${XDG_DATA_HOME:-$HOME/.local/share}"
 config_home="${XDG_CONFIG_HOME:-$HOME/.config}"
+state_home="${XDG_STATE_HOME:-$HOME/.local/state}"
 worker_dir="${PI_WORKER_DATA_DIR:-$data_home/local-ai-pi-worker}"
 worker_config="${PI_WORKER_CONFIG:-$config_home/local-ai-pi-worker/config.env}"
+update_state="$state_home/local-ai-pi-worker/update.json"
+update_cli="$worker_bin_dir/pi-worker-update"
 
 if [[ -r "$worker_config" ]]; then
   # shellcheck disable=SC1090
@@ -70,6 +73,8 @@ usage() {
     '  --text              Emit only final text' \
     '  --system-prompt TXT Override the minimal worker prompt' \
     '  --web-setup         Configure an optional web-search provider' \
+    '  --check-update      Query the latest stable package release' \
+    '  --update            Install the latest stable package release' \
     '  --sync              Force-refresh the worker catalog from the runtime' \
     '  --health            Synchronize and verify local worker readiness' \
     '  -h, --help          Show this help'
@@ -216,6 +221,14 @@ while (($#)); do
       unset FIRECRAWL_API_KEY
       exec pi --no-extensions --extension "$web_extension"
       ;;
+    --check-update)
+      [[ -x "$update_cli" ]] || { printf 'pi-worker: updater not installed: %s\n' "$update_cli" >&2; exit 1; }
+      exec "$update_cli" --check
+      ;;
+    --update)
+      [[ -x "$update_cli" ]] || { printf 'pi-worker: updater not installed: %s\n' "$update_cli" >&2; exit 1; }
+      exec "$update_cli" --apply
+      ;;
     --sync)
       exec "$worker_bin_dir/pi-worker-sync"
       ;;
@@ -306,6 +319,15 @@ fi
 if ((rpc_mode == 0)) && [[ -z "${task//[[:space:]]/}" ]]; then
   printf 'pi-worker: task must not be empty\n' >&2
   exit 2
+fi
+
+if [[ -t 2 && -r "$update_state" ]] \
+  && jq -e '.update_available == true' "$update_state" >/dev/null 2>&1; then
+  cached_latest="$(jq -r '.latest_version // empty' "$update_state")"
+  if [[ -n "$cached_latest" ]]; then
+    printf 'pi-worker: update %s is available; run: pi-worker --update\n' \
+      "$cached_latest" >&2
+  fi
 fi
 
 if [[ -n "$workdir" ]]; then

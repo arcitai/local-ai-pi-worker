@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.5.0 - 2026-08-28
+
+- Add `pi-worker --check-update` and `pi-worker --update` backed by stable
+  GitHub releases, with archive layout and release-version validation before
+  the installer runs.
+- Add a lightweight daily systemd user timer that caches update status and
+  sends at most one desktop notification per release. Worker invocations never
+  perform an implicit network check.
+- Surface a cached update notice only in interactive worker terminals and keep
+  RPC, JSON, and headless callers free of update protocol noise.
+- Make the release repository and automatic notification behavior configurable
+  through `PI_WORKER_UPDATE_REPO` and `PI_WORKER_UPDATE_NOTIFY`.
+- Install, diagnose, and restore the updater plus its systemd units within the
+  existing package ownership boundary.
+
 ## 0.4.0 - 2026-08-28
 
 - Replace the always-loaded `bounded-worker` skill with a 75-word system guard;

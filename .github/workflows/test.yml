@@ -15,6 +15,6 @@ jobs:
       - name: Install test dependencies
         run: sudo apt-get update && sudo apt-get install -y jq ripgrep shellcheck
       - name: Lint shell scripts
-        run: shellcheck install.sh uninstall.sh doctor.sh bin/pi-worker bin/pi-worker-sync tests/test.sh tests/fixtures/bin/pi tests/fixtures/bin/curl
+        run: shellcheck install.sh uninstall.sh doctor.sh bin/pi-worker bin/pi-worker-sync bin/pi-worker-update tests/test.sh tests/fixtures/bin/pi tests/fixtures/bin/curl tests/fixtures/bin/systemctl tests/fixtures/bin/notify-send tests/fixtures/bin/mise
       - name: Run tests
         run: ./tests/test.sh

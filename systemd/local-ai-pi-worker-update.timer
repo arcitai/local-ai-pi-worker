@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily Local AI Pi Worker release check
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+RandomizedDelaySec=2h
+
+[Install]
+WantedBy=timers.target

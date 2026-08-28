@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+printf 'SYSTEMCTL_ARGS=%s\n' "$*" >> "${MOCK_LOG:?}"
+case " $* " in
+  *' show-environment '*) exit 0 ;;
+  *' is-enabled local-ai-pi-worker-update.timer '*) exit 0 ;;
+  *) exit 0 ;;
+esac

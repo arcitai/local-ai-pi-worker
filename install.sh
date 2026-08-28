@@ -20,7 +20,7 @@ while (($#)); do
   shift
 done
 
-for command_name in awk bash curl grep install jq mktemp; do
+for command_name in awk bash curl grep install jq mktemp sed; do
   command -v "$command_name" >/dev/null || {
     printf 'install.sh: missing required command: %s\n' "$command_name" >&2
     exit 1
@@ -37,6 +37,9 @@ config_dir="$config_home/local-ai-pi-worker"
 state_dir="$state_home/local-ai-pi-worker"
 backup_dir="$state_dir/original"
 pi_dir="$data_dir/pi-agent"
+systemd_user_dir="$config_home/systemd/user"
+update_service="$systemd_user_dir/local-ai-pi-worker-update.service"
+update_timer="$systemd_user_dir/local-ai-pi-worker-update.timer"
 config_file="$config_dir/config.env"
 # pi-web-search 0.4.0 currently uses these fixed upstream paths. The installer
 # backs them up before applying credential-aware Monid/provider routing and the
@@ -74,6 +77,8 @@ append_config_default LOCAL_AI_MODEL_NAME "$LOCAL_AI_MODEL_NAME"
 append_config_default LOCAL_AI_API "$LOCAL_AI_API"
 append_config_default LOCAL_AI_THINKING_LEVELS "$LOCAL_AI_THINKING_LEVELS"
 append_config_default PI_WORKER_DEFAULT_PROFILE "$PI_WORKER_DEFAULT_PROFILE"
+append_config_default PI_WORKER_UPDATE_REPO "$PI_WORKER_UPDATE_REPO"
+append_config_default PI_WORKER_UPDATE_NOTIFY "$PI_WORKER_UPDATE_NOTIFY"
 install -m 600 "$migrated_config" "$config_file"
 rm -f -- "$migrated_config"
 # shellcheck disable=SC1090
@@ -97,6 +102,10 @@ if [[ -n "${LOCAL_AI_CONTEXT_WINDOW_OVERRIDE:-}" ]]; then
     printf 'install.sh: output token cap must be smaller than the context override\n' >&2
     exit 1
   fi
+fi
+if [[ "${PI_WORKER_UPDATE_NOTIFY:-1}" != 0 && "${PI_WORKER_UPDATE_NOTIFY:-1}" != 1 ]]; then
+  printf 'install.sh: PI_WORKER_UPDATE_NOTIFY must be 0 or 1\n' >&2
+  exit 1
 fi
 
 backup_once() {
@@ -130,11 +139,15 @@ command -v pi >/dev/null || { printf 'install.sh: pi is not installed\n' >&2; ex
 
 backup_once "$bin_dir/pi-worker" pi-worker
 backup_once "$bin_dir/pi-worker-sync" pi-worker-sync
+backup_once "$bin_dir/pi-worker-update" pi-worker-update
 backup_once "$skill_dir" orchestration-skill
 backup_once "$web_config" pi-web-search.json
+backup_once "$update_service" update-service
+backup_once "$update_timer" update-timer
 
 install -m 755 "$repo_dir/bin/pi-worker" "$bin_dir/pi-worker"
 install -m 755 "$repo_dir/bin/pi-worker-sync" "$bin_dir/pi-worker-sync"
+install -m 755 "$repo_dir/bin/pi-worker-update" "$bin_dir/pi-worker-update"
 rm -rf -- "$skill_dir"
 cp -a "$repo_dir/skills/orchestrate-pi-worker" "$skill_dir"
 
@@ -198,5 +211,35 @@ rm -f -- "$pi_dir/settings.json.tmp"
 PI_WORKER_CONFIG="$config_file" PI_WORKER_DATA_DIR="$data_dir" \
   "$bin_dir/pi-worker-sync"
 
+mkdir -p "$systemd_user_dir"
+escaped_update_bin="$bin_dir/pi-worker-update"
+if [[ "$escaped_update_bin" == *$'\n'* ]]; then
+  printf '%s\n' 'install.sh: updater path must not contain a newline' >&2
+  exit 1
+fi
+escaped_update_bin="${escaped_update_bin//\\/\\\\}"
+escaped_update_bin="${escaped_update_bin//&/\\&}"
+escaped_update_bin="${escaped_update_bin//|/\\|}"
+escaped_update_bin="${escaped_update_bin//%/%%}"
+escaped_update_bin="${escaped_update_bin//\"/\\\"}"
+rendered_service="$(mktemp)"
+sed "s|@PI_WORKER_UPDATE_BIN@|$escaped_update_bin|g" \
+  "$repo_dir/systemd/local-ai-pi-worker-update.service.in" > "$rendered_service"
+install -m 644 "$rendered_service" "$update_service"
+unlink "$rendered_service"
+install -m 644 "$repo_dir/systemd/local-ai-pi-worker-update.timer" "$update_timer"
 install -m 600 "$repo_dir/VERSION" "$state_dir/version"
+rm -f -- "$state_dir/update.json"
+
+if command -v systemctl >/dev/null \
+  && systemctl --user show-environment >/dev/null 2>&1; then
+  systemctl --user daemon-reload
+  if [[ "$PI_WORKER_UPDATE_NOTIFY" == 1 ]]; then
+    systemctl --user enable --now local-ai-pi-worker-update.timer >/dev/null
+  else
+    systemctl --user disable --now local-ai-pi-worker-update.timer >/dev/null 2>&1 || true
+  fi
+elif [[ "$PI_WORKER_UPDATE_NOTIFY" == 1 ]]; then
+  printf '%s\n' 'install.sh: systemd user manager unavailable; use pi-worker --check-update manually' >&2
+fi
 printf 'Installed local-ai-pi-worker. Run: %s --health\n' "$bin_dir/pi-worker"

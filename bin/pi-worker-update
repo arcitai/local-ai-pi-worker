@@ -1,0 +1,230 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+config_home="${XDG_CONFIG_HOME:-$HOME/.config}"
+state_home="${XDG_STATE_HOME:-$HOME/.local/state}"
+config_file="$config_home/local-ai-pi-worker/config.env"
+state_dir="$state_home/local-ai-pi-worker"
+version_file="$state_dir/version"
+update_file="$state_dir/update.json"
+
+if [[ -r "$config_file" ]]; then
+  # shellcheck disable=SC1090
+  source "$config_file"
+fi
+
+repo="${PI_WORKER_UPDATE_REPO:-onlinesourdough/local-ai-pi-worker}"
+mode=check
+
+usage() {
+  printf '%s\n' \
+    'Usage: pi-worker-update [--check|--status|--notify|--apply]' \
+    '' \
+    '  --check    Query the latest stable GitHub release (default)' \
+    '  --status   Show the last cached result without network access' \
+    '  --notify   Check and send one desktop notification per release' \
+    '  --apply    Download, verify, and install the latest stable release' \
+    '  -h, --help Show this help'
+}
+
+if (($# > 1)); then
+  usage >&2
+  exit 2
+fi
+if (($# == 1)); then
+  case "$1" in
+    --check) mode=check ;;
+    --status) mode=status ;;
+    --notify) mode=notify ;;
+    --apply) mode=apply ;;
+    -h|--help) usage; exit 0 ;;
+    *) printf 'pi-worker-update: unknown option: %s\n' "$1" >&2; usage >&2; exit 2 ;;
+  esac
+fi
+
+if [[ ! "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+  printf 'pi-worker-update: invalid PI_WORKER_UPDATE_REPO: %s\n' "$repo" >&2
+  exit 2
+fi
+
+installed_version() {
+  local version
+  if [[ ! -r "$version_file" ]]; then
+    printf '%s\n' 'pi-worker-update: installed version metadata is missing' >&2
+    return 1
+  fi
+  version="$(tr -d '[:space:]' < "$version_file")"
+  if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+    printf 'pi-worker-update: invalid installed version: %s\n' "$version" >&2
+    return 1
+  fi
+  printf '%s' "$version"
+}
+
+is_newer() {
+  local candidate="${1#v}"
+  local installed="${2#v}"
+  [[ "$candidate" != "$installed" ]] \
+    && [[ "$(printf '%s\n%s\n' "$installed" "$candidate" | sort -V | tail -n 1)" == "$candidate" ]]
+}
+
+show_status() {
+  if [[ ! -r "$update_file" ]]; then
+    printf '%s\n' 'No update check has been cached yet. Run: pi-worker --check-update'
+    return
+  fi
+  jq -r '
+    if .update_available then
+      "Update available: \(.installed_version) -> \(.latest_version)\n\(.release_url)\nRun: pi-worker --update"
+    elif .installed_version == .latest_version then
+      "Up to date: \(.installed_version) (checked \(.checked_at))"
+    else
+      "Installed: \(.installed_version); latest stable: \(.latest_version) (checked \(.checked_at))"
+    end
+  ' "$update_file"
+}
+
+if [[ "$mode" == status ]]; then
+  show_status
+  exit 0
+fi
+
+for command_name in curl date install jq mktemp sort tail tr; do
+  command -v "$command_name" >/dev/null || {
+    printf 'pi-worker-update: missing required command: %s\n' "$command_name" >&2
+    exit 1
+  }
+done
+
+current="$(installed_version)"
+api_url="https://api.github.com/repos/$repo/releases/latest"
+if ! release_json="$(curl \
+  --fail --silent --show-error --location \
+  --connect-timeout 5 --max-time 20 \
+  --header 'Accept: application/vnd.github+json' \
+  --header 'X-GitHub-Api-Version: 2022-11-28' \
+  --user-agent 'local-ai-pi-worker-update' \
+  "$api_url")"; then
+  if [[ "$mode" == notify ]]; then
+    exit 0
+  fi
+  printf '%s\n' 'pi-worker-update: could not query the latest release' >&2
+  exit 1
+fi
+
+tag="$(jq -r '.tag_name // empty' <<< "$release_json")"
+release_url="$(jq -r '.html_url // empty' <<< "$release_json")"
+latest="${tag#v}"
+if [[ ! "$tag" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ \
+  || ! "$release_url" =~ ^https://github\.com/ ]]; then
+  printf '%s\n' 'pi-worker-update: GitHub returned invalid release metadata' >&2
+  exit 1
+fi
+
+update_available=false
+if is_newer "$latest" "$current"; then
+  update_available=true
+fi
+last_notified=""
+if [[ -r "$update_file" ]]; then
+  last_notified="$(jq -r '.last_notified_version // empty' "$update_file" 2>/dev/null || true)"
+fi
+
+mkdir -p "$state_dir"
+state_tmp="$(mktemp "$state_dir/.update.json.XXXXXX")"
+jq -n \
+  --arg checked_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  --arg installed "$current" \
+  --arg latest "$latest" \
+  --arg release_url "$release_url" \
+  --arg last_notified "$last_notified" \
+  --argjson update_available "$update_available" '
+  {
+    schema_version: 1,
+    checked_at: $checked_at,
+    installed_version: $installed,
+    latest_version: $latest,
+    update_available: $update_available,
+    release_url: $release_url,
+    last_notified_version: (if $last_notified == "" then null else $last_notified end)
+  }
+' > "$state_tmp"
+install -m 600 "$state_tmp" "$update_file"
+unlink "$state_tmp"
+
+if [[ "$mode" == check ]]; then
+  show_status
+  exit 0
+fi
+
+if [[ "$mode" == notify ]]; then
+  if [[ "$update_available" == true && "$last_notified" != "$latest" ]]; then
+    if command -v notify-send >/dev/null \
+      && notify-send \
+        --app-name='Local AI Pi Worker' \
+        'Local AI Pi Worker update available' \
+        "$current -> $latest. Run: pi-worker --update"; then
+      notified_tmp="$(mktemp "$state_dir/.update.json.XXXXXX")"
+      jq --arg latest "$latest" '.last_notified_version = $latest' \
+        "$update_file" > "$notified_tmp"
+      install -m 600 "$notified_tmp" "$update_file"
+      unlink "$notified_tmp"
+    else
+      printf 'Local AI Pi Worker update available: %s -> %s. Run: pi-worker --update\n' \
+        "$current" "$latest" >&2
+    fi
+  fi
+  exit 0
+fi
+
+if [[ "$update_available" != true ]]; then
+  printf 'Already up to date: %s\n' "$current"
+  exit 0
+fi
+
+for command_name in awk tar; do
+  command -v "$command_name" >/dev/null || {
+    printf 'pi-worker-update: %s is required to apply an update\n' "$command_name" >&2
+    exit 1
+  }
+done
+
+update_tmp="$(mktemp -d)"
+cleanup() {
+  case "$update_tmp" in
+    /tmp/*|"${TMPDIR:-/tmp}"/*) rm -rf -- "$update_tmp" ;;
+    *) printf 'pi-worker-update: refusing unsafe temporary path: %s\n' "$update_tmp" >&2 ;;
+  esac
+}
+trap cleanup EXIT
+archive="$update_tmp/release.tar.gz"
+archive_url="https://github.com/$repo/archive/refs/tags/$tag.tar.gz"
+curl \
+  --fail --silent --show-error --location \
+  --connect-timeout 5 --max-time 120 \
+  --user-agent 'local-ai-pi-worker-update' \
+  --output "$archive" \
+  "$archive_url"
+
+archive_root="$(tar -tzf "$archive" | awk -F/ 'NF {print $1}' | sort -u)"
+if [[ -z "$archive_root" || "$archive_root" == *$'\n'* \
+  || ! "$archive_root" =~ ^[A-Za-z0-9_.-]+$ ]]; then
+  printf '%s\n' 'pi-worker-update: release archive has an unsafe layout' >&2
+  exit 1
+fi
+mkdir -p "$update_tmp/extract"
+tar -xzf "$archive" --no-same-owner --no-same-permissions -C "$update_tmp/extract"
+release_dir="$update_tmp/extract/$archive_root"
+if [[ ! -x "$release_dir/install.sh" || ! -r "$release_dir/VERSION" ]]; then
+  printf '%s\n' 'pi-worker-update: release archive is missing install metadata' >&2
+  exit 1
+fi
+archive_version="$(tr -d '[:space:]' < "$release_dir/VERSION")"
+if [[ "$archive_version" != "$latest" ]]; then
+  printf 'pi-worker-update: release version mismatch (%s != %s)\n' \
+    "$archive_version" "$latest" >&2
+  exit 1
+fi
+
+(cd -- "$release_dir" && ./install.sh)
+printf 'Updated local-ai-pi-worker: %s -> %s\n' "$current" "$latest"
