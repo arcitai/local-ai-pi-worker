@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+worker_bin_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 data_home="${XDG_DATA_HOME:-$HOME/.local/share}"
 config_home="${XDG_CONFIG_HOME:-$HOME/.config}"
 worker_dir="${PI_WORKER_DATA_DIR:-$data_home/local-ai-pi-worker}"
@@ -19,7 +20,7 @@ mode="${PI_WORKER_MODE:-text}"
 pi_agent_dir="${PI_WORKER_PI_DIR:-$worker_dir/pi-agent}"
 web_extension="${PI_WORKER_WEB_EXTENSION:-$pi_agent_dir/npm/node_modules/@tian.zuo/pi-web-search/index.ts}"
 web_enabled=1
-system_prompt="${PI_WORKER_SYSTEM_PROMPT:-You are a delegated worker. Complete only the assigned bounded task. Use tools only when needed. Return concise findings with concrete file paths, source links, or other evidence and state uncertainty explicitly. Do not modify files unless write tools are enabled and the task explicitly requests it.}"
+system_prompt="${PI_WORKER_SYSTEM_PROMPT:-You are a headless delegated worker with no access to the parent conversation. Complete only the assigned bounded task. Do not ask the user or delegate further work. Use tools only when needed. Return concise findings with concrete file paths, source links, or other evidence and state uncertainty explicitly. Do not modify files unless write tools are enabled and the task explicitly requests it.}"
 
 usage() {
   printf '%s\n' \
@@ -38,6 +39,7 @@ usage() {
     '  --text              Emit only final text' \
     '  --system-prompt TXT Override the minimal worker prompt' \
     '  --web-setup         Start Pi interactively; run /websearch-auth for Monid' \
+    '  --sync              Refresh Codex and Pi model catalogs from the runtime' \
     '  --health            Verify OpenCodex and list routed models' \
     '  -h, --help          Show this help'
 }
@@ -99,6 +101,9 @@ while (($#)); do
       export PI_TELEMETRY=0 PI_SKIP_VERSION_CHECK=1 FIRECRAWL_KEYLESS=0
       unset FIRECRAWL_API_KEY
       exec pi --no-extensions --extension "$web_extension"
+      ;;
+    --sync)
+      exec "$worker_bin_dir/pi-worker-sync"
       ;;
     --health)
       ocx health --json

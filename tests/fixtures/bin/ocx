@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+case "${1:-}" in
+  config|service|ready|sync)
+    exit 0
+    ;;
+  export)
+    printf '%s\n' '{"providers":{"opencodex":{"models":[{"id":"local-ai/qwen3.8-27b-local","name":"local","input":["text","image"],"contextWindow":131072,"maxTokens":32000}]}}}'
+    ;;
+  health)
+    printf '%s\n' '{"ok":true}'
+    ;;
+  *)
+    printf 'mock ocx: unsupported command: %s\n' "${1:-}" >&2
+    exit 2
+    ;;
+esac

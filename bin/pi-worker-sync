@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+data_home="${XDG_DATA_HOME:-$HOME/.local/share}"
+config_home="${XDG_CONFIG_HOME:-$HOME/.config}"
+state_home="${XDG_STATE_HOME:-$HOME/.local/state}"
+worker_dir="${PI_WORKER_DATA_DIR:-$data_home/local-ai-pi-worker}"
+worker_config="${PI_WORKER_CONFIG:-$config_home/local-ai-pi-worker/config.env}"
+state_dir="$state_home/local-ai-pi-worker"
+pi_dir="$worker_dir/pi-agent"
+sync_codex=1
+
+usage() {
+  printf '%s\n' \
+    'Usage: pi-worker-sync [--skip-codex-sync]' \
+    '' \
+    'Refresh the OpenCodex and dedicated Pi catalogs from runtime metadata.'
+}
+
+while (($#)); do
+  case "$1" in
+    --skip-codex-sync) sync_codex=0 ;;
+    -h|--help) usage; exit 0 ;;
+    *) printf 'pi-worker-sync: unknown option: %s\n' "$1" >&2; usage >&2; exit 2 ;;
+  esac
+  shift
+done
+
+for command_name in jq ocx install mktemp; do
+  command -v "$command_name" >/dev/null || {
+    printf 'pi-worker-sync: missing required command: %s\n' "$command_name" >&2
+    exit 1
+  }
+done
+
+[[ -r "$worker_config" ]] || {
+  printf 'pi-worker-sync: machine config not found: %s\n' "$worker_config" >&2
+  exit 1
+}
+# shellcheck disable=SC1090
+source "$worker_config"
+
+: "${LOCAL_AI_PROVIDER_ID:=local-ai}"
+: "${LOCAL_AI_MODEL_ID:?LOCAL_AI_MODEL_ID is required}"
+: "${LOCAL_AI_MAX_OUTPUT_TOKENS:?LOCAL_AI_MAX_OUTPUT_TOKENS is required}"
+if ! [[ "$LOCAL_AI_MAX_OUTPUT_TOKENS" =~ ^[0-9]+$ ]] || ((LOCAL_AI_MAX_OUTPUT_TOKENS <= 0)); then
+  printf 'pi-worker-sync: LOCAL_AI_MAX_OUTPUT_TOKENS must be a positive integer\n' >&2
+  exit 1
+fi
+
+if ((sync_codex)); then
+  ocx sync >/dev/null
+  ocx ready --wait --timeout 60 >/dev/null
+fi
+
+mkdir -p "$pi_dir" "$state_dir"
+exported="$(mktemp)"
+rendered="$(mktemp)"
+trap 'rm -f -- "$exported" "$rendered"' EXIT
+ocx export --client pi --json > "$exported"
+
+local_id="$LOCAL_AI_PROVIDER_ID/$LOCAL_AI_MODEL_ID"
+resolved_context="$(jq -r --arg id "$local_id" '
+  first(.providers.opencodex.models[]? | select(.id == $id) | .contextWindow) // empty
+' "$exported")"
+
+if ! [[ "$resolved_context" =~ ^[0-9]+$ ]] || ((resolved_context <= 0)); then
+  printf 'pi-worker-sync: runtime did not publish a context window for %s\n' "$local_id" >&2
+  printf 'Set LOCAL_AI_CONTEXT_WINDOW_OVERRIDE only if the runtime cannot expose it.\n' >&2
+  exit 1
+fi
+if ((LOCAL_AI_MAX_OUTPUT_TOKENS >= resolved_context)); then
+  printf 'pi-worker-sync: output cap %s must be smaller than runtime context %s\n' \
+    "$LOCAL_AI_MAX_OUTPUT_TOKENS" "$resolved_context" >&2
+  exit 1
+fi
+
+jq \
+  --arg id "$local_id" \
+  --argjson context "$resolved_context" \
+  --argjson output "$LOCAL_AI_MAX_OUTPUT_TOKENS" \
+  '(.providers.opencodex.models[] | select(.id == $id)) |=
+    (.input = ["text"] | .contextWindow = $context | .maxTokens = $output)' \
+  "$exported" > "$rendered"
+install -m 600 "$rendered" "$pi_dir/models.json"
+
+state_tmp="$state_dir/runtime.env.tmp"
+printf 'LOCAL_AI_RESOLVED_CONTEXT_WINDOW=%s\n' "$resolved_context" > "$state_tmp"
+install -m 600 "$state_tmp" "$state_dir/runtime.env"
+rm -f -- "$state_tmp"
+
+printf 'Synced %s with runtime context %s tokens.\n' "$local_id" "$resolved_context"

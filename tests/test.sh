@@ -5,7 +5,7 @@ repo_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 tmp_root="$(mktemp -d)"
 trap 'rm -rf -- "$tmp_root"' EXIT
 
-for script in "$repo_dir/install.sh" "$repo_dir/uninstall.sh" "$repo_dir/doctor.sh" "$repo_dir/bin/pi-worker"; do
+for script in "$repo_dir/install.sh" "$repo_dir/uninstall.sh" "$repo_dir/doctor.sh" "$repo_dir/bin/pi-worker" "$repo_dir/bin/pi-worker-sync"; do
   bash -n "$script"
 done
 
@@ -27,10 +27,18 @@ export PATH
 
 "$repo_dir/install.sh" --skip-packages --skip-opencodex >/dev/null
 test -x "$PI_WORKER_BIN_DIR/pi-worker"
-test -f "$CODEX_HOME/skills/orchestrate-pi-worker/SKILL.md"
+test -x "$PI_WORKER_BIN_DIR/pi-worker-sync"
+test -f "$HOME/.agents/skills/orchestrate-pi-worker/SKILL.md"
 test -f "$XDG_DATA_HOME/local-ai-pi-worker/pi-agent/settings.json"
 jq -e '.defaultModel == "local-ai/qwen3.8-27b-local"' "$XDG_DATA_HOME/local-ai-pi-worker/pi-agent/settings.json" >/dev/null
 jq -e '.firecrawl.keyless == false' "$HOME/.config/pi-web-search/config.json" >/dev/null
+
+"$repo_dir/install.sh" --skip-packages >/dev/null
+jq -e '.providers["local-ai"] | has("contextWindow") | not' "$HOME/.opencodex/config.json" >/dev/null
+jq -e '.providers["local-ai"] | has("modelContextWindows") | not' "$HOME/.opencodex/config.json" >/dev/null
+jq -e 'any(.providers.opencodex.models[]?; .id == "local-ai/qwen3.8-27b-local" and .contextWindow == 131072 and .maxTokens == 8192 and .input == ["text"])' \
+  "$XDG_DATA_HOME/local-ai-pi-worker/pi-agent/models.json" >/dev/null
+grep -q 'LOCAL_AI_RESOLVED_CONTEXT_WINDOW=131072' "$XDG_STATE_HOME/local-ai-pi-worker/runtime.env"
 
 FIRECRAWL_API_KEY=must-not-leak "$PI_WORKER_BIN_DIR/pi-worker" --no-web -- 'bounded test' >/dev/null
 grep -q 'FIRECRAWL_API_KEY=unset FIRECRAWL_KEYLESS=0' "$mock_log"
@@ -42,7 +50,8 @@ fi
 
 "$repo_dir/uninstall.sh" --keep-opencodex >/dev/null
 test ! -e "$PI_WORKER_BIN_DIR/pi-worker"
-test ! -e "$CODEX_HOME/skills/orchestrate-pi-worker"
+test ! -e "$PI_WORKER_BIN_DIR/pi-worker-sync"
+test ! -e "$HOME/.agents/skills/orchestrate-pi-worker"
 test ! -e "$XDG_DATA_HOME/local-ai-pi-worker"
 
 printf '%s\n' 'tests passed'

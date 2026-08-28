@@ -27,6 +27,14 @@ opencodex_config="${OPENCODEX_CONFIG_PATH:-$HOME/.opencodex/config.json}"
 web_config="$HOME/.config/pi-web-search/config.json"
 pi_auth="${PI_GLOBAL_AUTH_FILE:-$HOME/.pi/agent/auth.json}"
 
+skill_root="$HOME/.agents/skills"
+if [[ -r "$config_dir/config.env" ]]; then
+  # shellcheck disable=SC1090
+  source "$config_dir/config.env"
+  skill_root="${PI_WORKER_SKILL_ROOT:-$skill_root}"
+fi
+skill_dir="$skill_root/orchestrate-pi-worker"
+
 restore_path() {
   local target="$1"
   local name="$2"
@@ -45,7 +53,12 @@ case "$data_dir" in
 esac
 
 restore_path "$bin_dir/pi-worker" pi-worker
-restore_path "$codex_home/skills/orchestrate-pi-worker" codex-skill
+restore_path "$bin_dir/pi-worker-sync" pi-worker-sync
+restore_path "$skill_dir" orchestration-skill
+# Also finish cleanup for installations upgraded from v0.1.
+if [[ ! -e "$state_dir/legacy-skill-migrated" ]]; then
+  restore_path "$codex_home/skills/orchestrate-pi-worker" codex-skill
+fi
 restore_path "$web_config" pi-web-search.json
 restore_path "$pi_auth" pi-auth.json
 

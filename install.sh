@@ -47,7 +47,7 @@ opencodex_config="${OPENCODEX_CONFIG_PATH:-$HOME/.opencodex/config.json}"
 web_config="$HOME/.config/pi-web-search/config.json"
 pi_auth="${PI_GLOBAL_AUTH_FILE:-$HOME/.pi/agent/auth.json}"
 
-mkdir -p "$config_dir" "$backup_dir" "$data_dir" "$bin_dir" "$codex_home/skills"
+mkdir -p "$config_dir" "$backup_dir" "$data_dir" "$bin_dir"
 if [[ ! -e "$config_file" ]]; then
   install -m 600 "$repo_dir/config/defaults.env" "$config_file"
 fi
@@ -57,17 +57,28 @@ source "$repo_dir/config/defaults.env"
 # shellcheck disable=SC1090
 source "$config_file"
 
-for integer_name in OPENCODEX_PORT LOCAL_AI_CONTEXT_WINDOW LOCAL_AI_MAX_OUTPUT_TOKENS; do
+skill_root="${PI_WORKER_SKILL_ROOT:-$HOME/.agents/skills}"
+skill_dir="$skill_root/orchestrate-pi-worker"
+legacy_skill_dir="$codex_home/skills/orchestrate-pi-worker"
+mkdir -p "$skill_root"
+
+for integer_name in OPENCODEX_PORT LOCAL_AI_MAX_OUTPUT_TOKENS; do
   value="${!integer_name}"
-  [[ "$value" =~ ^[0-9]+$ ]] || {
+  if ! [[ "$value" =~ ^[0-9]+$ ]] || ((value <= 0)); then
     printf 'install.sh: %s must be a positive integer\n' "$integer_name" >&2
     exit 1
-  }
+  fi
 done
 
-if ((LOCAL_AI_MAX_OUTPUT_TOKENS >= LOCAL_AI_CONTEXT_WINDOW)); then
-  printf 'install.sh: output token cap must be smaller than the context window\n' >&2
-  exit 1
+if [[ -n "${LOCAL_AI_CONTEXT_WINDOW_OVERRIDE:-}" ]]; then
+  if ! [[ "$LOCAL_AI_CONTEXT_WINDOW_OVERRIDE" =~ ^[0-9]+$ ]] || ((LOCAL_AI_CONTEXT_WINDOW_OVERRIDE <= 0)); then
+    printf 'install.sh: LOCAL_AI_CONTEXT_WINDOW_OVERRIDE must be blank or a positive integer\n' >&2
+    exit 1
+  fi
+  if ((LOCAL_AI_MAX_OUTPUT_TOKENS >= LOCAL_AI_CONTEXT_WINDOW_OVERRIDE)); then
+    printf 'install.sh: output token cap must be smaller than the context override\n' >&2
+    exit 1
+  fi
 fi
 
 backup_once() {
@@ -108,12 +119,28 @@ if ((skip_opencodex == 0)); then
 fi
 
 backup_once "$bin_dir/pi-worker" pi-worker
-backup_once "$codex_home/skills/orchestrate-pi-worker" codex-skill
+backup_once "$bin_dir/pi-worker-sync" pi-worker-sync
+backup_once "$skill_dir" orchestration-skill
 backup_once "$web_config" pi-web-search.json
 
 install -m 755 "$repo_dir/bin/pi-worker" "$bin_dir/pi-worker"
-rm -rf -- "$codex_home/skills/orchestrate-pi-worker"
-cp -a "$repo_dir/skills/orchestrate-pi-worker" "$codex_home/skills/orchestrate-pi-worker"
+install -m 755 "$repo_dir/bin/pi-worker-sync" "$bin_dir/pi-worker-sync"
+rm -rf -- "$skill_dir"
+cp -a "$repo_dir/skills/orchestrate-pi-worker" "$skill_dir"
+
+# v0.1 installed into Codex's private skill directory. Restore its original
+# state when migrating to the shared Agent Skills location.
+legacy_skill_migrated="$state_dir/legacy-skill-migrated"
+if [[ "$skill_dir" != "$legacy_skill_dir" && ! -e "$legacy_skill_migrated" ]]; then
+  if [[ -e "$backup_dir/codex-skill" ]]; then
+    rm -rf -- "$legacy_skill_dir"
+    mkdir -p "$(dirname -- "$legacy_skill_dir")"
+    cp -a -- "$backup_dir/codex-skill" "$legacy_skill_dir"
+  elif [[ -e "$backup_dir/codex-skill.absent" ]]; then
+    rm -rf -- "$legacy_skill_dir"
+  fi
+  : > "$legacy_skill_migrated"
+fi
 
 mkdir -p "$(dirname -- "$web_config")"
 jq \
@@ -140,8 +167,6 @@ if ((skip_opencodex == 0)); then
     printf '{}\n' > "$base_config"
   fi
 
-  max_input=$((LOCAL_AI_CONTEXT_WINDOW - LOCAL_AI_MAX_OUTPUT_TOKENS))
-  compact_limit=$((LOCAL_AI_CONTEXT_WINDOW * 3 / 4))
   existing_api_key="$(jq -r --arg provider_id "$LOCAL_AI_PROVIDER_ID" '.providers[$provider_id].apiKey // empty' "$base_config")"
   runtime_api_key=""
   if [[ -z "${LOCAL_AI_API_KEY:-}" && -z "$existing_api_key" ]] && command -v ps >/dev/null; then
@@ -159,30 +184,35 @@ if ((skip_opencodex == 0)); then
     ')"
   fi
   local_api_key="${LOCAL_AI_API_KEY:-${existing_api_key:-$runtime_api_key}}"
+  context_override_json=null
+  if [[ -n "${LOCAL_AI_CONTEXT_WINDOW_OVERRIDE:-}" ]]; then
+    context_override_json="$LOCAL_AI_CONTEXT_WINDOW_OVERRIDE"
+  fi
   cloud_models_json="$(printf '%s' "$PI_WORKER_CLOUD_MODELS" | jq -R 'split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0))')"
   local_provider_json="$(jq -n \
     --arg base_url "$LOCAL_AI_BASE_URL" \
     --arg model "$LOCAL_AI_MODEL_ID" \
     --arg api_key "$local_api_key" \
-    --argjson context "$LOCAL_AI_CONTEXT_WINDOW" \
-    --argjson input "$max_input" \
-    --argjson compact "$compact_limit" \
+    --arg reasoning "$LOCAL_AI_DEFAULT_REASONING" \
+    --argjson context_override "$context_override_json" \
     --argjson output "$LOCAL_AI_MAX_OUTPUT_TOKENS" \
     '{
       adapter:"openai-chat", baseUrl:$base_url, allowPrivateNetwork:true,
       codexToolMode:"shell", apiKey:$api_key, defaultModel:$model,
       liveModels:true, models:[$model], selectedModels:[$model],
-      contextWindow:$context, modelContextWindows:{($model):$context},
-      modelMaxInputTokens:{($model):$input},
-      modelAutoCompactTokenLimits:{($model):$compact},
       modelInputModalities:{($model):["text"]}, noVisionModels:[$model],
       modelReasoningEfforts:{($model):["low","medium","xhigh"]},
-      modelDefaultReasoningEfforts:{($model):"xhigh"},
+      modelDefaultReasoningEfforts:{($model):$reasoning},
       modelSupportsReasoningSummaries:{($model):true},
       modelSupportsVerbosity:{($model):false},
       modelMaxOutputTokens:{($model):$output},
       preserveReasoningContentModels:[$model], parallelToolCalls:true
-    } | if $api_key == "" then del(.apiKey) else . end')"
+    }
+    | if $context_override == null then . else
+        .contextWindow = $context_override
+        | .modelContextWindows = {($model):$context_override}
+      end
+    | if $api_key == "" then del(.apiKey) else . end')"
 
   rendered_config="$(mktemp)"
   jq \
@@ -255,16 +285,8 @@ install -m 600 "$pi_dir/settings.json.tmp" "$pi_dir/settings.json"
 rm -f -- "$pi_dir/settings.json.tmp"
 
 if ((skip_opencodex == 0)); then
-  ocx export --client pi --json > "$pi_dir/models.json.tmp"
-  jq \
-    --arg id "$LOCAL_AI_PROVIDER_ID/$LOCAL_AI_MODEL_ID" \
-    --argjson context "$LOCAL_AI_CONTEXT_WINDOW" \
-    --argjson output "$LOCAL_AI_MAX_OUTPUT_TOKENS" \
-    '(.providers.opencodex.models[] | select(.id == $id)) |=
-      (.input = ["text"] | .contextWindow = $context | .maxTokens = $output)' \
-    "$pi_dir/models.json.tmp" > "$pi_dir/models.json.rendered"
-  install -m 600 "$pi_dir/models.json.rendered" "$pi_dir/models.json"
-  rm -f -- "$pi_dir/models.json.tmp" "$pi_dir/models.json.rendered"
+  PI_WORKER_CONFIG="$config_file" PI_WORKER_DATA_DIR="$data_dir" \
+    "$bin_dir/pi-worker-sync" --skip-codex-sync
 fi
 
 install -m 600 "$repo_dir/VERSION" "$state_dir/version"

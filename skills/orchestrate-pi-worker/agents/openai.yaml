@@ -1,4 +1,4 @@
 interface:
   display_name: "Orchestrate Pi Worker"
-  short_description: "Delegate bounded work through OpenCodex and Pi"
-  default_prompt: "Use $orchestrate-pi-worker to delegate this bounded task to the configured Pi worker."
+  short_description: "Delegate bounded work to a headless Pi worker"
+  default_prompt: "Use $orchestrate-pi-worker to delegate this self-contained task to the configured Pi worker."

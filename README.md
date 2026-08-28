@@ -4,11 +4,13 @@ Reproducible Linux integration for a minimal Pi worker routed through
 [OpenCodex](https://github.com/lidge-jun/opencodex), with both local and cloud
 models available from one provider catalog.
 
-The default local profile targets an OpenAI-compatible model server at
-`127.0.0.1:8080`, a 65,536-token context window, one local inference slot and
-native text-only input. Codex image attachments remain available through an
-explicit cloud vision sidecar. Every value is machine-configurable; repository
-paths and model storage paths are never hardcoded.
+The default local integration targets an OpenAI-compatible model server at
+`127.0.0.1:8080`, one local inference slot and native text-only input. Its
+served context window is inherited from live runtime metadata, so a 65K or 128K
+runtime profile is configured only in the runtime. Codex image attachments
+remain available through an explicit cloud sidecar that converts an image to a
+bounded text description before the local model receives it. Repository paths,
+model storage paths and machine-specific runtime profiles are never hardcoded.
 
 ## What it installs
 
@@ -17,7 +19,8 @@ paths and model storage paths are never hardcoded.
 - explicit Codex web-search and vision sidecars for the text-only local model;
 - a dedicated Pi config under `~/.local/share/local-ai-pi-worker/pi-agent`;
 - `~/.local/bin/pi-worker` with read-only defaults and opt-in write tools;
-- the `orchestrate-pi-worker` Codex skill;
+- `~/.local/bin/pi-worker-sync` for runtime-to-catalog synchronization;
+- the portable `orchestrate-pi-worker` skill under `~/.agents/skills`;
 - Monid-first web tools with OpenCodex search fallback and Firecrawl disabled.
 
 It does not install a model, llama.cpp, GPU drivers, an Omarchy plugin, themes,
@@ -41,8 +44,9 @@ catalog and the new skill. The OpenCodex service starts automatically after
 future logins/reboots.
 
 Edit `~/.config/local-ai-pi-worker/config.env` and rerun `./install.sh` to use a
-different endpoint, model ID, context size or cloud-model allowlist. Full options
-are in [configuration](docs/CONFIGURATION.md).
+different endpoint, model ID or cloud-model allowlist. Context normally has no
+integration setting: OpenCodex reads the served value from `/v1/models`. Full
+options are in [configuration](docs/CONFIGURATION.md).
 
 ## Use
 
@@ -50,10 +54,21 @@ are in [configuration](docs/CONFIGURATION.md).
 pi-worker --thinking low --no-web -- 'Inspect this repository. Do not edit files.'
 pi-worker --model gpt-5.6-luna --thinking high -- 'Review this design.'
 pi-worker --write -- 'Implement the explicitly scoped change and run its tests.'
+pi-worker --sync
 pi-worker --health
 ```
 
 Only use `--write` when the caller has explicitly authorized that exact mutation.
+Run `pi-worker --sync` after changing a live runtime profile; OpenCodex refreshes
+the Codex catalog and the command writes the same discovered context to Pi's
+dedicated model catalog. OpenCodex also re-discovers the active context whenever
+its service starts, including after a reboot.
+
+The bundled skill is a generic parent/worker contract: the parent may be Codex,
+Pi, another Agent Skills-compatible harness, or a human operator. The shared
+`~/.agents/skills` location is discovered by both Codex and Pi; override
+`PI_WORKER_SKILL_ROOT` for a harness with another skill root. The dedicated
+worker itself stays isolated and never loads this orchestration skill recursively.
 
 ## Web search
 
