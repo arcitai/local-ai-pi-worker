@@ -24,19 +24,36 @@ Local runtime values:
 
 Worker values:
 
-- `PI_WORKER_DEFAULT_TOOLS`: default Pi tool allowlist.
+- `PI_WORKER_DEFAULT_PROFILE`: default capability profile. `inspect` is the
+  minimal read-only default.
 - `PI_WORKER_SKILL_ROOT`: optional Agent Skills destination. Blank uses the
   harness-neutral `~/.agents/skills` location.
 - `PI_WORKER_PROVIDER`, `PI_WORKER_MODEL`, `PI_WORKER_THINKING`,
-  `PI_WORKER_TOOLS`, `PI_WORKER_SYSTEM_PROMPT`, and `PI_WORKER_JOB_ID`:
-  per-process defaults useful to a parent harness.
+  `PI_WORKER_PROFILE`, `PI_WORKER_TOOLS`, `PI_WORKER_SYSTEM_PROMPT`, and
+  `PI_WORKER_JOB_ID`: per-process defaults useful to a parent harness.
 
 `--cwd` selects the worker's rooted work contract and the repository context Pi
 loads from `AGENTS.md`/`CLAUDE.md`. It is not an operating-system sandbox;
-tool policy and the parent remain responsible for enforcement. Implicit skill
-discovery stays disabled, so pass relevant task or lifecycle skills explicitly
-with repeatable `--skill`. Use `--no-context-files` only for a deliberately
+tool policy and the parent remain responsible for enforcement. The launcher
+keeps global skills out, discovers project `.agents/skills` and `.pi/skills`
+from the selected Git-root hierarchy, and passes those catalogs to Pi with
+progressive disclosure. `--no-skills` disables that catalog; `--skill` forces
+one exceptional path. Use `--no-context-files` only for a deliberately
 context-free child.
+
+Capability profiles are intentionally small:
+
+| Profile | Tool allowlist |
+| --- | --- |
+| `none` | none |
+| `inspect` | `read,grep,find,ls` |
+| `research` | inspect plus `web_search,web_fetch` |
+| `edit` | inspect plus `edit,write` |
+| `build` | edit plus `bash` |
+
+Use `--web` to add the optional web tools, `--tools` for a custom allowlist,
+and `--extension` only for reviewed local code. Profiles do not select model,
+context, reasoning, provider, goal, or project skills.
 
 Context belongs to the runtime. Select 65,536, 131,072, or another supported
 value there. The next local `pi-worker` call compares the endpoint with its
@@ -49,13 +66,17 @@ is written only to the mode-0600 machine-local Pi catalog because Pi needs it to
 call the endpoint. Set `LOCAL_AI_API_KEY` explicitly when process discovery is
 not applicable.
 
-For Monid, set `MONID_API_KEY` in the launching environment or run
-`pi-worker --web-setup` and use `/websearch-auth`. Firecrawl remains disabled.
+Web is opt-in. Monid is the preferred search/fetch provider only when
+`MONID_API_KEY` or its `/websearch-auth` credential is present. The extension
+filters unconfigured providers out of the active chain, so an independently
+configured provider search becomes primary when Monid is absent; fetch falls
+back to direct HTTP. Firecrawl keyless remains disabled.
 
 Examples:
 
 ```bash
-PI_WORKER_THINKING=low pi-worker --no-web -- 'Inspect this repository.'
-pi-worker --provider openai --model MODEL_ID --thinking high -- 'Review this design.'
+PI_WORKER_THINKING=low pi-worker --profile inspect -- 'Inspect this repository.'
+pi-worker --profile research -- 'Research the current dependency behavior.'
+pi-worker --provider openai --model MODEL_ID --profile edit --thinking high -- 'Review and edit this design.'
 pi-worker --cwd /path/to/project --job-id task-42 --rpc
 ```

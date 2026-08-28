@@ -29,6 +29,17 @@ may start a local worker, and a shell-only parent may do the same. The portable
 skill is the behavioral adapter for Agent Skills-compatible harnesses; the CLI
 and its process protocol are the universal integration boundary.
 
+Pi owns the agent loop, built-in tools, sessions, compaction, steering, and
+follow-up. This package narrows that surface through capability profiles rather
+than rebuilding a Codex-like harness. `inspect` is the default; web, writes,
+shell, and additional extensions are independent opt-ins.
+
+Project `AGENTS.md`/`CLAUDE.md` files load from the rooted cwd. The launcher
+keeps global skill discovery off, then adds only `.agents/skills` and
+`.pi/skills` catalogs from the selected Git-root hierarchy. Pi exposes their
+metadata first and loads matching bodies on demand. This preserves project
+methods without injecting the parent orchestration skill into the child.
+
 Runtime capabilities flow one way. The endpoint publishes its active context;
 `pi-worker-sync` validates it and writes the same value to Pi's dedicated
 `models.json`. A local invocation first performs a small consistency check and

@@ -8,7 +8,11 @@ printf 'PI_DIR=%s FIRECRAWL_API_KEY=%s FIRECRAWL_KEYLESS=%s ARGS=%s\n' \
   "$*" >> "${MOCK_LOG:?}"
 
 case " ${*} " in
-  *' install '*) exit 0 ;;
+  *' install '*)
+    mkdir -p "${PI_CODING_AGENT_DIR:?}/npm/node_modules/@tian.zuo/pi-web-search"
+    : > "${PI_CODING_AGENT_DIR}/npm/node_modules/@tian.zuo/pi-web-search/index.ts"
+    exit 0
+    ;;
 esac
 
 if [[ " ${*} " == *' --list-models '* ]]; then

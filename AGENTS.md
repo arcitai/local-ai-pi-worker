@@ -35,10 +35,10 @@ command.
   protocol, not scrape terminal output or invent a second server.
 - Transport settlement is neutral; parent adapters own lifecycle names such as
   AIOS `waiting-review` and Codex app-server thread states.
-- Load rooted repository context files by default, keep implicit skill discovery
-  off, and pass only relevant task/lifecycle skills explicitly.
-- Default tools are read-only plus optional web search/fetch. Enable writes only
-  for an explicitly authorized task.
+- Load rooted repository context files and project skill catalogs by default;
+  keep global skill discovery off and preserve Pi's progressive disclosure.
+- Default to the `inspect` profile. Web, writes, shell, explicit skills, and
+  extra extensions are separate opt-ins selected by the lead.
 - Never load the delegation skill recursively inside the child worker.
 - Queue local workers when the runtime exposes one inference slot.
 

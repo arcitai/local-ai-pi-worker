@@ -34,13 +34,15 @@ ID, selected model, thinking level, streaming state, and session file.
 
 Safety is established before RPC starts:
 
-- default tools are read-only plus configured web tools;
-- `--no-web` removes network tools;
-- `--write` explicitly enables shell/edit/write tools;
-- implicit skills, prompts, themes, and extensions are disabled in the child;
+- the default `inspect` profile exposes only read/grep/find/ls;
+- `research`, `edit`, and `build` opt into web, file mutation, and shell in
+  separate steps;
+- global skills, prompts, themes, and implicit extensions are disabled;
+- project skill directories are supplied explicitly by the launcher and remain
+  progressively disclosed; `--no-skills` removes even those catalogs;
 - repository `AGENTS.md`/`CLAUDE.md` files are loaded from the selected cwd by
   default, while `--no-context-files` provides a context-free escape hatch;
-- the orchestration skill is not loaded recursively;
+- the parent orchestration skill and removed child wrapper are not loaded;
 - the local runtime/catalog check runs quietly before protocol output begins.
 
 For applications, prefer this mapping:
@@ -62,6 +64,10 @@ Lifecycle names belong to the parent adapter. For example, AIOS may map a
 settled Build handoff to `waiting-review` and later lead acceptance to
 `complete`. The CLI itself reports `settled` (or `failed`) and does not impose
 that AIOS-specific state machine on other harnesses.
+
+The initial assignment's `Goal:` is the logical worker goal. Pi already owns
+the execution loop and resumable session; the parent owns durable goal and
+lifecycle state. Do not mirror those concepts in a second worker database.
 
 ## Desktop UI boundary
 

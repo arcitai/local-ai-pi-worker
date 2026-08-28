@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.4.0 - 2026-08-28
+
+- Replace the always-loaded `bounded-worker` skill with a 75-word system guard;
+  the lead's compact assignment remains the task contract.
+- Add capability profiles: context-free `none`, default read-only `inspect`,
+  opt-in `research`, shell-free `edit`, and shell-enabled `build`.
+- Make web tools and their extension opt-in. Monid is primary only when
+  configured; provider search otherwise leads, with direct fetch fallback and
+  Firecrawl keyless disabled.
+- Discover only project `.agents/skills` and `.pi/skills` from the selected Git
+  root while keeping global child skill discovery off. Preserve Pi's
+  progressive disclosure and add `--no-skills` as the zero-catalog escape hatch.
+- Add audited extension passthrough with `--extension`, retain custom `--tools`,
+  and include the resolved profile/tools in one-shot result JSON.
+- Use Pi's native agent loop, sessions, compaction, steering, follow-up, and RPC
+  instead of inventing a duplicate worker goal engine. The assignment goal and
+  parent lifecycle remain authoritative.
+
 ## 0.3.0 - 2026-08-28
 
 - Narrow the package to a harness-neutral local Pi worker: direct local runtime

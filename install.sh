@@ -39,7 +39,8 @@ backup_dir="$state_dir/original"
 pi_dir="$data_dir/pi-agent"
 config_file="$config_dir/config.env"
 # pi-web-search 0.4.0 currently uses these fixed upstream paths. The installer
-# backs them up before applying the worker's Monid-first, Firecrawl-off policy.
+# backs them up before applying credential-aware Monid/provider routing and the
+# Firecrawl-off policy.
 web_config="$HOME/.config/pi-web-search/config.json"
 pi_auth="${PI_GLOBAL_AUTH_FILE:-$HOME/.pi/agent/auth.json}"
 
@@ -59,7 +60,8 @@ source "$config_file"
 # new direct-worker fields that an existing machine config does not yet have.
 migrated_config="$(mktemp)"
 awk '
-  !/^(OPENCODEX_VERSION|OPENCODEX_PORT|PI_WEB_SEARCH_MODEL|CODEX_WEB_SEARCH_MODEL|CODEX_VISION_MODEL|PI_WORKER_CLOUD_MODELS)=/
+  !/^(OPENCODEX_VERSION|OPENCODEX_PORT|PI_WEB_SEARCH_MODEL|CODEX_WEB_SEARCH_MODEL|CODEX_VISION_MODEL|PI_WORKER_CLOUD_MODELS)=/ &&
+  $0 != "PI_WORKER_DEFAULT_TOOLS=read,grep,find,ls,web_search,web_fetch"
 ' "$config_file" > "$migrated_config"
 append_config_default() {
   local name="$1"
@@ -71,6 +73,7 @@ append_config_default() {
 append_config_default LOCAL_AI_MODEL_NAME "$LOCAL_AI_MODEL_NAME"
 append_config_default LOCAL_AI_API "$LOCAL_AI_API"
 append_config_default LOCAL_AI_THINKING_LEVELS "$LOCAL_AI_THINKING_LEVELS"
+append_config_default PI_WORKER_DEFAULT_PROFILE "$PI_WORKER_DEFAULT_PROFILE"
 install -m 600 "$migrated_config" "$config_file"
 rm -f -- "$migrated_config"
 # shellcheck disable=SC1090
@@ -173,8 +176,7 @@ fi
 mkdir -p "$pi_dir"
 install -m 600 "$repo_dir/worker/worker-system-prompt.txt" "$data_dir/worker-system-prompt.txt"
 rm -rf -- "$data_dir/skills/bounded-worker"
-mkdir -p "$data_dir/skills"
-cp -a "$repo_dir/worker/skills/bounded-worker" "$data_dir/skills/bounded-worker"
+rmdir "$data_dir/skills" 2>/dev/null || true
 package="npm:@tian.zuo/pi-web-search@$PI_WEB_SEARCH_VERSION"
 PI_CODING_AGENT_DIR="$pi_dir" PI_TELEMETRY=0 pi install "$package" >/dev/null
 

@@ -82,12 +82,11 @@ web_config="$HOME/.config/pi-web-search/config.json"
 if jq -e '
     .firecrawl.keyless == false
     and .searchOrder[0] == "monid"
-    and .fetchOrder[0] == "monid"
-    and (.fetchOrder | index("direct")) != null
+    and .fetchOrder == ["monid", "direct"]
   ' "$web_config" >/dev/null 2>&1; then
-  pass 'web policy (Monid first, direct fetch fallback, Firecrawl off)'
+  pass 'credential-aware web policy (Monid when configured, provider fallback, Firecrawl off)'
 else
-  fail 'web policy (Monid first, direct fetch fallback, Firecrawl off)'
+  fail 'credential-aware web policy (Monid when configured, provider fallback, Firecrawl off)'
 fi
 
 pi_auth="${PI_GLOBAL_AUTH_FILE:-$HOME/.pi/agent/auth.json}"

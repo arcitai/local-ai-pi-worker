@@ -5,9 +5,10 @@ A small, reproducible Linux package for running an isolated
 OpenAI-compatible model server.
 
 It owns one thing: the local Pi worker boundary. That includes a dedicated Pi
-configuration, a safe CLI, runtime-derived model metadata, a compact web-tool
-policy, and a portable delegation skill. It does not install or configure a
-parent agent, gateway, desktop app, local model runtime, GPU stack, or model.
+configuration, a capability-profile CLI, runtime-derived model metadata, an
+optional web tool, and a portable delegation skill. It does not install or
+configure a parent agent, gateway, desktop app, local model runtime, GPU stack,
+or model.
 
 The default endpoint is `127.0.0.1:8080`. Context is inherited from live
 runtime metadata rather than duplicated in this repo, so changing a runtime
@@ -19,9 +20,11 @@ profile from 65K to 128K changes the worker on its next invocation.
 - a dedicated Pi home under `~/.local/share/local-ai-pi-worker/pi-agent`;
 - `pi-worker`, a read-only-by-default one-shot and RPC worker CLI;
 - `pi-worker-sync`, which discovers and atomically updates the local catalog;
-- a small child-only bounded-task and handoff skill;
+- a 75-word child system guard with no always-loaded child skill;
 - the portable `orchestrate-pi-worker` skill under `~/.agents/skills`;
-- Monid-first web tools, direct fetch fallback, and Firecrawl disabled.
+- optional credential-aware web tools: Monid is primary when configured;
+  otherwise the configured provider search is primary. Direct fetch remains
+  available and Firecrawl keyless is disabled.
 
 Nothing is written to general Pi settings. The web extension currently uses
 its upstream shared config/auth paths; the installer backs those files up and
@@ -53,19 +56,24 @@ One-shot workers return their final answer on stdout, diagnostics on stderr,
 and success/failure through the process exit code.
 
 ```bash
-pi-worker --cwd /path/to/project --thinking low --no-web -- 'Inspect this repository. Do not edit files.'
-pi-worker --cwd /path/to/project --write -- 'Implement the explicitly scoped change and run its tests.'
+pi-worker --cwd /path/to/project --profile inspect -- 'Inspect this repository. Do not edit files.'
+pi-worker --cwd /path/to/project --profile research -- 'Research the current upstream API.'
+pi-worker --cwd /path/to/project --profile build -- 'Implement the explicitly scoped change and run its tests.'
 pi-worker --cwd /path/to/project --job-id review-42 --result-json --no-tools -- 'Classify this input.'
 pi-worker --health
 ```
 
-Only use `--write` when the caller explicitly authorized that exact mutation.
+The default `inspect` profile exposes only `read`, `grep`, `find`, and `ls`.
+`research` adds the optional web extension; `edit` adds file mutation without a
+shell; `build` adds `bash`. `none` exposes no tools. Use `--tools`, `--web`, or
+an audited `--extension` only for a task that needs a narrower custom surface.
+Only use `edit` or `build` when the caller authorized that exact mutation.
 Every local invocation first performs a lightweight runtime/catalog check and
 self-synchronizes on drift. `pi-worker --sync` remains available as a forced
 recovery command; it is not a routine step.
 
 `--cwd` is the rooted task contract and context origin, not a kernel sandbox.
-Keep write mode for trusted workers with precise authority; a parent needing
+Keep `edit`/`build` for trusted workers with precise authority; a parent needing
 hard isolation should add its own container/sandbox around the same CLI.
 
 ## Harness integration
@@ -96,12 +104,17 @@ becomes the Pi session name in RPC mode. A process worker can appear in
 terminal/tool activity, but it is not automatically a native, clickable child
 thread in a desktop app; that presentation belongs to the parent app's adapter.
 
-Every child gets only the bundled `bounded-worker` skill by default. Implicit
-skill discovery is disabled to keep context small and prevent recursive
-delegation, while repository `AGENTS.md`/`CLAUDE.md` instructions load from the
-selected cwd. A lead passes relevant task/lifecycle capabilities with repeated
-`--skill /absolute/path` options. The worker follows the caller's handoff shape,
-or falls back to a concise evidence-backed summary.
+Pi already supplies the agent loop, sessions, compaction, steering, follow-up,
+and built-in code tools; this package does not recreate them. The assignment's
+`Goal:` is the logical worker goal, `--job-id` is its identity, and an RPC
+session is its continuation mechanism. Lifecycle state remains in the parent.
+
+Repository `AGENTS.md`/`CLAUDE.md` instructions load from the selected cwd.
+Project `.agents/skills` and `.pi/skills` are discovered only inside that Git
+root and use Pi's progressive disclosure: descriptions are cataloged, while
+matching bodies load on demand. Global skills—including the parent delegation
+skill—stay excluded from the child. Use `--no-skills` for zero project skills;
+reserve `--skill PATH` for one capability outside normal project discovery.
 
 The bundled skill teaches an Agent Skills-compatible parent when and how to use
 both modes. A parent Pi session may itself use OpenAI while delegating to the
@@ -110,9 +123,9 @@ and consume stdout. Set `PI_WORKER_SKILL_ROOT` when a harness uses another
 global skill directory.
 
 The ordinary `pi` command and its general config are unchanged. Only
-`pi-worker` exports the dedicated Pi home and disables implicit skills,
-extensions, prompts, and themes. Its rooted repository context remains intact;
-`--no-context-files` disables that too when deliberately required.
+`pi-worker` exports the dedicated Pi home and disables global skills, implicit
+extensions, prompts, and themes. Its rooted repository context and skills
+remain intact; `--no-context-files` and `--no-skills` disable them independently.
 
 The CLI also accepts `--provider NAME --model ID`. That is an escape hatch for
 providers available to the dedicated worker through environment credentials or
@@ -123,11 +136,13 @@ See [RPC and app integration](docs/RPC.md) and
 
 ## Web tools
 
-Search prefers Monid when `MONID_API_KEY` or its Pi web-search credential is
-available. Other providers supported by the installed web extension may be
-used when independently authenticated. Fetch falls back to direct HTTP.
-Firecrawl keyless mode is off and its environment key is removed from worker
-processes.
+Web tools are absent from the default worker. `--profile research` or `--web`
+loads the small `pi-web-search` extension and exposes only `web_search` and
+`web_fetch`. It can use any independently configured supported provider. Monid
+is first in the preference order, but the extension filters that order by
+available credentials: without a Monid key, the configured provider search is
+primary instead. Direct HTTP remains the keyless fetch fallback. Firecrawl
+keyless mode is off and its environment key is removed from worker processes.
 
 An existing OpenAI-compatible search endpoint is preserved as machine-local
 web-tool configuration; this package neither creates nor owns it.
@@ -135,9 +150,19 @@ web-tool configuration; this package neither creates nor owns it.
 To configure the extension interactively:
 
 ```bash
+export MONID_API_KEY="..."  # set through your preferred secret manager
 pi-worker --web-setup
-# run /websearch-auth and choose Monid
+# alternatively run /websearch-auth and configure Monid there
 ```
+
+The package never stores a Monid key in the repository. Without a Monid key,
+the extension removes Monid from the active chain instead of attempting it;
+on this machine the primary search is then the existing OpenAI-compatible Luna
+loopback.
+
+Pi extensions run as local code with the worker's OS permissions. Additional
+extensions are never auto-discovered; pass a reviewed source with `--extension`
+and allow only its required tool names with `--tools`.
 
 ## Optional gateways
 

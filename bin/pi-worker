@@ -15,28 +15,32 @@ fi
 provider="${PI_WORKER_PROVIDER:-${LOCAL_AI_PROVIDER_ID:-local-ai}}"
 model="${PI_WORKER_MODEL:-${LOCAL_AI_MODEL_ID:-qwen3.8-27b-local}}"
 thinking="${PI_WORKER_THINKING:-${LOCAL_AI_DEFAULT_REASONING:-medium}}"
-tools="${PI_WORKER_TOOLS:-${PI_WORKER_DEFAULT_TOOLS:-read,grep,find,ls,web_search,web_fetch}}"
+profile="${PI_WORKER_PROFILE:-${PI_WORKER_DEFAULT_PROFILE:-inspect}}"
+tools=""
+tools_override_set=0
+if [[ -n "${PI_WORKER_TOOLS:-${PI_WORKER_DEFAULT_TOOLS:-}}" ]]; then
+  tools="${PI_WORKER_TOOLS:-$PI_WORKER_DEFAULT_TOOLS}"
+  tools_override_set=1
+fi
 mode="${PI_WORKER_MODE:-text}"
 result_json=0
 rpc_mode=0
 job_id="${PI_WORKER_JOB_ID:-piw-$(date -u +%s)-$$}"
 pi_agent_dir="${PI_WORKER_PI_DIR:-$worker_dir/pi-agent}"
 web_extension="${PI_WORKER_WEB_EXTENSION:-$pi_agent_dir/npm/node_modules/@tian.zuo/pi-web-search/index.ts}"
-web_enabled=1
+web_policy=auto
 context_enabled=1
+project_skills_enabled=1
 workdir=""
-worker_skill="${PI_WORKER_CORE_SKILL:-$worker_dir/skills/bounded-worker}"
 skill_paths=()
-if [[ -e "$worker_skill" ]]; then
-  skill_paths+=("$worker_skill")
-fi
+extension_sources=()
 system_prompt_file="${PI_WORKER_SYSTEM_PROMPT_FILE:-$worker_dir/worker-system-prompt.txt}"
 if [[ -n "${PI_WORKER_SYSTEM_PROMPT:-}" ]]; then
   system_prompt="$PI_WORKER_SYSTEM_PROMPT"
 elif [[ -r "$system_prompt_file" ]]; then
   system_prompt="$(<"$system_prompt_file")"
 else
-  system_prompt='You are an isolated delegated worker. Complete only the bounded task and return a concise evidence-backed handoff to the lead. Do not ask the user, delegate further, leave the assigned working directory, or modify files without explicit write authorization.'
+  system_prompt='You are a headless worker reporting to a lead. Treat the task and loaded repository instructions as the complete contract. Work only toward the stated goal in the selected working directory. Do not ask the user or delegate. Use only enabled tools. Modify files only when the task explicitly authorizes it. Verify consequential work. Return a concise evidence-backed result to the lead. Lifecycle and acceptance belong to the lead.'
 fi
 
 usage() {
@@ -50,18 +54,22 @@ usage() {
     '  --cwd PATH          Run the worker inside this explicit project root' \
     '  --job-id ID         Stable parent-owned worker identifier' \
     '  --thinking LEVEL    off|minimal|low|medium|high|xhigh|max' \
-    '  --skill PATH        Add one explicit child skill (repeatable)' \
+    '  --profile NAME      none|inspect|research|edit|build (default: inspect)' \
+    '  --skill PATH        Force one extra skill path (repeatable)' \
+    '  --no-skills         Ignore project .agents/.pi skill catalogs' \
+    '  --extension SOURCE  Load one audited Pi extension (repeatable)' \
     '  --no-context-files  Ignore project AGENTS.md/CLAUDE.md files' \
-    '  --tools LIST        Pi tool allowlist' \
+    '  --tools LIST        Override the profile with a Pi tool allowlist' \
     '  --no-tools          Disable every tool' \
-    '  --no-web            Disable web_search and web_fetch' \
-    '  --write             Enable scoped filesystem and shell mutation tools' \
+    '  --web               Add the optional web_search and web_fetch tools' \
+    '  --no-web            Remove web tools from the selected profile' \
+    '  --write             Compatibility alias for --profile build' \
     '  --json              Stream raw Pi JSONL events' \
     '  --result-json       Emit one stable final-result JSON object' \
     '  --rpc               Run a persistent Pi JSONL worker on stdin/stdout' \
     '  --text              Emit only final text' \
     '  --system-prompt TXT Override the minimal worker prompt' \
-    '  --web-setup         Start Pi interactively; run /websearch-auth for Monid' \
+    '  --web-setup         Configure an optional web-search provider' \
     '  --sync              Force-refresh the worker catalog from the runtime' \
     '  --health            Synchronize and verify local worker readiness' \
     '  -h, --help          Show this help'
@@ -74,6 +82,31 @@ remove_tool() {
   list="${list#,}"
   list="${list%,}"
   printf '%s' "$list"
+}
+
+has_tool() {
+  [[ ",$1," == *",$2,"* ]]
+}
+
+add_tool() {
+  local list="$1"
+  local name="$2"
+  if has_tool "$list" "$name"; then
+    printf '%s' "$list"
+  elif [[ -n "$list" ]]; then
+    printf '%s,%s' "$list" "$name"
+  else
+    printf '%s' "$name"
+  fi
+}
+
+add_unique_path() {
+  local candidate="$1"
+  local existing
+  for existing in "${skill_paths[@]}"; do
+    [[ "$existing" == "$candidate" ]] && return
+  done
+  skill_paths+=("$candidate")
 }
 
 while (($#)); do
@@ -103,25 +136,39 @@ while (($#)); do
       thinking="${2:?missing value for --thinking}"
       shift 2
       ;;
+    --profile)
+      profile="${2:?missing value for --profile}"
+      tools_override_set=0
+      shift 2
+      ;;
     --tools)
       tools="${2:?missing value for --tools}"
+      tools_override_set=1
       shift 2
       ;;
     --skill)
       candidate="${2:?missing value for --skill}"
       if [[ -d "$candidate" ]]; then
-        skill_paths+=("$(cd -- "$candidate" && pwd -P)")
+        add_unique_path "$(cd -- "$candidate" && pwd -P)"
       elif [[ -f "$candidate" ]]; then
-        skill_paths+=("$(cd -- "$(dirname -- "$candidate")" && pwd -P)/$(basename -- "$candidate")")
+        add_unique_path "$(cd -- "$(dirname -- "$candidate")" && pwd -P)/$(basename -- "$candidate")"
       else
         printf 'pi-worker: skill path not found: %s\n' "$candidate" >&2
         exit 2
       fi
       shift 2
       ;;
+    --no-skills)
+      project_skills_enabled=0
+      shift
+      ;;
+    --extension)
+      extension_sources+=("${2:?missing value for --extension}")
+      shift 2
+      ;;
     --no-tools)
-      tools=""
-      web_enabled=0
+      profile=none
+      tools_override_set=0
       shift
       ;;
     --no-context-files)
@@ -129,11 +176,16 @@ while (($#)); do
       shift
       ;;
     --no-web)
-      web_enabled=0
+      web_policy=off
+      shift
+      ;;
+    --web)
+      web_policy=on
       shift
       ;;
     --write)
-      tools="read,bash,edit,write,grep,find,ls,web_search,web_fetch"
+      profile=build
+      tools_override_set=0
       shift
       ;;
     --json)
@@ -191,6 +243,41 @@ while (($#)); do
   esac
 done
 
+if ((tools_override_set == 0)); then
+  case "$profile" in
+    none) tools="" ;;
+    inspect) tools="read,grep,find,ls" ;;
+    research) tools="read,grep,find,ls,web_search,web_fetch" ;;
+    edit) tools="read,grep,find,ls,edit,write" ;;
+    build) tools="read,grep,find,ls,edit,write,bash" ;;
+    *)
+      printf 'pi-worker: unknown profile: %s\n' "$profile" >&2
+      exit 2
+      ;;
+  esac
+else
+  profile=custom
+fi
+
+tools="${tools//[[:space:]]/}"
+if [[ -n "$tools" && ! "$tools" =~ ^[A-Za-z0-9_.:-]+(,[A-Za-z0-9_.:-]+)*$ ]]; then
+  printf 'pi-worker: --tools must be a comma-separated list of tool names\n' >&2
+  exit 2
+fi
+
+if [[ "$web_policy" == on ]]; then
+  tools="$(add_tool "$tools" web_search)"
+  tools="$(add_tool "$tools" web_fetch)"
+elif [[ "$web_policy" == off ]]; then
+  tools="$(remove_tool "$tools" web_search)"
+  tools="$(remove_tool "$tools" web_fetch)"
+fi
+
+web_enabled=0
+if has_tool "$tools" web_search || has_tool "$tools" web_fetch; then
+  web_enabled=1
+fi
+
 if [[ ! "$job_id" =~ ^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$ ]]; then
   printf 'pi-worker: --job-id must be 1-128 safe identifier characters\n' >&2
   exit 2
@@ -227,6 +314,27 @@ else
   workdir="$(pwd -P)"
 fi
 
+if ((project_skills_enabled)); then
+  project_root="$workdir"
+  if command -v git >/dev/null 2>&1; then
+    discovered_root="$(git -C "$workdir" rev-parse --show-toplevel 2>/dev/null || true)"
+    if [[ -n "$discovered_root" ]]; then
+      project_root="$(cd -- "$discovered_root" && pwd -P)"
+    fi
+  fi
+  skill_cursor="$workdir"
+  while :; do
+    [[ -d "$skill_cursor/.agents/skills" ]] \
+      && add_unique_path "$skill_cursor/.agents/skills"
+    [[ -d "$skill_cursor/.pi/skills" ]] \
+      && add_unique_path "$skill_cursor/.pi/skills"
+    [[ "$skill_cursor" == "$project_root" ]] && break
+    skill_parent="$(dirname -- "$skill_cursor")"
+    [[ "$skill_parent" == "$skill_cursor" ]] && break
+    skill_cursor="$skill_parent"
+  done
+fi
+
 if [[ "$provider" == "${LOCAL_AI_PROVIDER_ID:-local-ai}" \
   && "$model" == "${LOCAL_AI_MODEL_ID:-qwen3.8-27b-local}" ]]; then
   "$worker_bin_dir/pi-worker-sync" --ensure --quiet
@@ -237,9 +345,7 @@ if ((web_enabled)); then
     printf 'pi-worker: web extension not found: %s\n' "$web_extension" >&2
     exit 1
   fi
-else
-  tools="$(remove_tool "$tools" web_search)"
-  tools="$(remove_tool "$tools" web_fetch)"
+  extension_sources+=("$web_extension")
 fi
 
 export PI_CODING_AGENT_DIR="$pi_agent_dir"
@@ -273,9 +379,9 @@ else
   args+=(--name "$job_id")
 fi
 
-if ((web_enabled)); then
-  args+=(--extension "$web_extension")
-fi
+for extension_source in "${extension_sources[@]}"; do
+  args+=(--extension "$extension_source")
+done
 
 if [[ -n "$tools" ]]; then
   args+=(--tools "$tools")
@@ -294,11 +400,13 @@ if ((result_json)); then
     --argjson exit_code "$status" \
     --arg job_id "$job_id" \
     --arg state "$([[ "$status" -eq 0 ]] && printf settled || printf failed)" \
+    --arg profile "$profile" \
+    --arg tools "$tools" \
     --arg provider "$provider" \
     --arg model "$model" \
     --arg cwd "$workdir" \
     --arg result "$result" \
-    '{ok:$ok, exit_code:$exit_code, job_id:$job_id, state:$state, provider:$provider, model:$model, cwd:$cwd, result:$result}'
+    '{ok:$ok, exit_code:$exit_code, job_id:$job_id, state:$state, profile:$profile, tools:(if $tools == "" then [] else ($tools | split(",")) end), provider:$provider, model:$model, cwd:$cwd, result:$result}'
   exit "$status"
 fi
 
