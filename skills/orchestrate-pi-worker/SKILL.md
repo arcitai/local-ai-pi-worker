@@ -1,6 +1,6 @@
 ---
 name: orchestrate-pi-worker
-description: Delegate one bounded, independently verifiable task to the isolated Pi worker configured by local-ai-pi-worker. Use from Codex, Pi, Claude Code, Hermes, AIOS, another Agent Skills-compatible harness, or a shell when selecting a minimal capability profile, starting or steering a one-shot/RPC worker, or consuming its handoff; do not use for user interaction, parent-only tools, or broad unsupervised mutation.
+description: Delegate a bounded task through local-ai-pi-worker using capability profiles and one-shot or native Pi RPC handoffs. Use when launching, steering, or collecting a Pi worker; parent-only work stays with the lead.
 ---
 
 # Orchestrate Pi Worker
@@ -36,8 +36,9 @@ Profiles never select a provider, model, context window, role, or project
 skill. Add web to another profile with `--web`; use `--tools` only for a narrow
 custom allowlist. `--write` is a compatibility alias for `build`.
 
-Pi automatically receives `AGENTS.md`/`CLAUDE.md`, neutral machine skills from
-`~/.agents/skills`, and project `.agents/skills`/`.pi/skills` from the selected
+Pi loads `AGENTS.md`/`CLAUDE.md` from the selected cwd. The launcher keeps Pi's
+implicit skill discovery off and explicitly supplies neutral machine skills from
+`~/.agents/skills` and project `.agents/skills`/`.pi/skills` from the selected
 Git-root hierarchy. Only skill metadata is initially exposed; Pi reads matching
 bodies on demand. The orchestration skill itself belongs in the parent
 harness's separate global skill root. Use `--no-global-skills` to omit machine

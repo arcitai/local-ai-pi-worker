@@ -60,7 +60,8 @@ machine skills children receive and defaults to `~/.agents/skills`; keep these
 roots separate.
 
 If an agent is doing the setup, point it at [AGENTS.md](AGENTS.md). That file
-defines the package boundary and the exact install, audit, and release checks.
+defines the package boundary and separates read-only inspection from installation,
+live readiness, and release checks.
 
 ## Use
 

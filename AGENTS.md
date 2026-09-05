@@ -13,12 +13,23 @@ optional adjacent bridge, but it is never a package dependency or install step.
 Do not hardcode repository paths, model-file paths, machine context windows, or
 parent-specific session IDs.
 
-## Setup and audit
+## Inspection and setup
 
-1. Read `README.md`, `docs/ARCHITECTURE.md`, and `config/defaults.env`.
+For repository work, read `README.md` and `docs/ARCHITECTURE.md`; read
+`config/defaults.env` when configuration or runtime behavior is relevant.
+Read-only audits use source files, Git status/diffs, and, when installed update
+status is relevant, `pi-worker-update --status` (cached status only). These do
+not establish live runtime readiness. Do not run installation or synchronization
+as an inspection prerequisite: `./doctor.sh`, `pi-worker --health`, and normal
+local worker invocations can write runtime-derived metadata, even with the
+`inspect` profile.
+
+For an authorized installation or live readiness check:
+
+1. Read `config/defaults.env` and `docs/CONFIGURATION.md`.
 2. Confirm the configured local endpoint is running.
-3. Run `./install.sh`; use `--skip-packages` only when the pinned Pi version is
-   already available.
+3. For installation, run `./install.sh`; use `--skip-packages` only when the
+   pinned Pi version is already available.
 4. Run `./doctor.sh` and `pi-worker --health`. Both synchronize runtime-derived
    metadata before reporting readiness.
 5. Smoke-test a read-only one-shot worker and the RPC handshake.
@@ -51,6 +62,10 @@ Keep shell scripts portable Bash and machine files mode 0600. Preserve unknown
 providers in the dedicated `models.json`, preserve unrelated user files, and
 keep uninstall restore-based. Update docs, tests, `CHANGELOG.md`, and `VERSION`
 for behavior changes.
+
+For local source changes, run affected checks; `./tests/test.sh` uses disposable
+homes and mocked runtime/package/systemd commands. Live installation and release
+checks below belong to their authorized lifecycle, not every documentation edit.
 
 Before release, run:
 
