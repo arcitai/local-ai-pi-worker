@@ -1,8 +1,8 @@
 # local-ai-pi-worker
 
-A small, reproducible Linux package for running an isolated
-[Pi coding agent](https://github.com/earendil-works/pi-mono) against a local
-OpenAI-compatible model server.
+Run a [Pi coding agent](https://github.com/earendil-works/pi-mono) against a
+local model server on Linux. The package keeps the worker configuration separate
+and gives a parent agent a command-line and RPC interface for delegating work.
 
 It owns one thing: the local Pi worker boundary. That includes a dedicated Pi
 configuration, a capability-profile CLI, runtime-derived model metadata, an
