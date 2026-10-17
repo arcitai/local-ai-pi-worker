@@ -40,7 +40,7 @@ Prerequisites: Linux, Bash, `jq`, `curl`, and either `mise` or Node/npm. The
 configured local OpenAI-compatible endpoint must be running.
 
 ```bash
-git clone https://github.com/onlinesourdough/local-ai-pi-worker.git
+git clone https://github.com/arcitai/local-ai-pi-worker.git
 cd local-ai-pi-worker
 ./install.sh
 ./doctor.sh

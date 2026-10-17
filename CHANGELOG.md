@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Move the repository, installation links and default update source to Arc’IT AI.
+  Existing releases and old GitHub URLs continue to resolve through the repository transfer.
+
 ## 0.6.0 - 2026-08-28
 
 - Supply every valid machine-global Agent Skill from `~/.agents/skills` to Pi

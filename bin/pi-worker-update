@@ -13,7 +13,7 @@ if [[ -r "$config_file" ]]; then
   source "$config_file"
 fi
 
-repo="${PI_WORKER_UPDATE_REPO:-onlinesourdough/local-ai-pi-worker}"
+repo="${PI_WORKER_UPDATE_REPO:-arcitai/local-ai-pi-worker}"
 mode=check
 
 usage() {
