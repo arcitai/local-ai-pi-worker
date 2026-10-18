@@ -98,7 +98,7 @@ grep -q '^LOCAL_AI_API=' "$XDG_CONFIG_HOME/local-ai-pi-worker/config.env"
 grep -q '^LOCAL_AI_THINKING_LEVELS=' "$XDG_CONFIG_HOME/local-ai-pi-worker/config.env"
 grep -q '^PI_WORKER_DEFAULT_PROFILE=inspect' "$XDG_CONFIG_HOME/local-ai-pi-worker/config.env"
 grep -q '^PI_WORKER_MACHINE_SKILL_ROOT=' "$XDG_CONFIG_HOME/local-ai-pi-worker/config.env"
-grep -q '^PI_WORKER_UPDATE_REPO=arcitai/local-ai-pi-worker' "$XDG_CONFIG_HOME/local-ai-pi-worker/config.env"
+grep -q '^PI_WORKER_UPDATE_REPO=gustavonline/local-ai-pi-worker' "$XDG_CONFIG_HOME/local-ai-pi-worker/config.env"
 grep -q '^PI_WORKER_UPDATE_NOTIFY=1' "$XDG_CONFIG_HOME/local-ai-pi-worker/config.env"
 if grep -q '^OPENCODEX_VERSION=\|^OPENCODEX_PORT=\|^PI_WORKER_CLOUD_MODELS=\|^PI_WORKER_DEFAULT_TOOLS=' \
   "$XDG_CONFIG_HOME/local-ai-pi-worker/config.env"; then
